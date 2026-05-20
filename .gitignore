@@ -1,0 +1,17 @@
+node_modules/
+.next/
+dist/
+build/
+.turbo/
+.langgraph_api/
+.synthea/
+data/kg/
+.agents/
+skills-lock.json
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.vscode/
+.idea/

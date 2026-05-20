@@ -110,6 +110,8 @@ build/
 .langgraph_api/
 .synthea/
 data/kg/
+.agents/
+skills-lock.json
 .env
 .env.local
 .env.*.local
@@ -118,6 +120,8 @@ data/kg/
 .vscode/
 .idea/
 ```
+
+> `.agents/` and `skills-lock.json` are from the Vercel/agent-skills bootstrapper that may have scaffolded this project. Claude Code doesn't read them; keeping them gitignored so they don't follow the repo around.
 
 - [ ] **Step 2: Write `.editorconfig`**
 
