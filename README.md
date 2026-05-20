@@ -1,6 +1,8 @@
 # Clinical Trial Matching
 
-Patient-to-trial matching workflow built with LangGraph.js. Next.js frontend (Vercel) calls a LangGraph agent (LangGraph Platform).
+A patient-to-trial matching workflow that augments standard eligibility matching with **biomedical knowledge graph reasoning**. Given a patient's FHIR record, it identifies relevant disease mechanisms, surfaces drug-repurposing candidates from [PrimeKG](https://zitniklab.hms.harvard.edu/projects/PrimeKG/), queries [ClinicalTrials.gov](https://clinicaltrials.gov/) for recruiting trials, and ranks each match on a combined eligibility + mechanism + PubMed-evidence score.
+
+Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys as a Next.js app (Vercel) + LangGraph agent (LangGraph Platform) backed by a Neo4j knowledge graph.
 
 ## Repo layout
 
