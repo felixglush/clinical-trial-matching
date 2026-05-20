@@ -15,6 +15,16 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/shared:
+    dependencies:
+      zod:
+        specifier: 4.4.3
+        version: 4.4.3
+    devDependencies:
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
 packages:
 
   prettier@3.8.3:
@@ -27,8 +37,13 @@ packages:
     engines: {node: '>=14.17'}
     hasBin: true
 
+  zod@4.4.3:
+    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+
 snapshots:
 
   prettier@3.8.3: {}
 
   typescript@6.0.3: {}
+
+  zod@4.4.3: {}
