@@ -1,0 +1,7 @@
+{
+  "node_version": "20",
+  "graphs": {
+    "clinical_trial_matching": "./src/graph.ts:graph"
+  },
+  "env": ".env"
+}
