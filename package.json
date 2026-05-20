@@ -13,10 +13,13 @@
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
     "lint": "pnpm -r run lint",
-    "patients:generate": "./scripts/generate-patients.sh"
+    "patients:generate": "./scripts/generate-patients.sh",
+    "kg:build-subset": "tsx scripts/build-primekg-subset.ts",
+    "kg:load": "cypher-shell -f scripts/load-primekg-to-neo4j.cypher"
   },
   "devDependencies": {
-    "typescript": "6.0.3",
-    "prettier": "3.8.3"
+    "prettier": "3.8.3",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3"
   }
 }
