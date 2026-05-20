@@ -15,7 +15,7 @@ docs/superpowers/   Design specs and implementation plans
 
 ## Local dev
 
-Prerequisites: Node 20, pnpm 9, `OPENROUTER_API_KEY`, [Neo4j Desktop](https://neo4j.com/download/) (or Docker).
+Prerequisites: Node 24, pnpm 9, `OPENROUTER_API_KEY`, [Neo4j Desktop](https://neo4j.com/download/) (or Docker).
 
 ```bash
 pnpm install
