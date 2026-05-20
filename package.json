@@ -1,0 +1,25 @@
+{
+  "name": "clinical-trial-matching",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": "24"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "dev:agent": "pnpm --filter agent dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "patients:generate": "./scripts/generate-patients.sh",
+    "kg:build-subset": "tsx scripts/build-primekg-subset.ts",
+    "kg:load": "cypher-shell -f scripts/load-primekg-to-neo4j.cypher"
+  },
+  "devDependencies": {
+    "prettier": "3.8.3",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3"
+  }
+}

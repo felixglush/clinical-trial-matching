@@ -1,0 +1,15 @@
+{
+  "resourceType": "Bundle",
+  "type": "collection",
+  "entry": [
+    {
+      "resource": {
+        "resourceType": "Patient",
+        "id": "patient-1",
+        "name": [{ "given": ["Jane"], "family": "Doe" }],
+        "gender": "female",
+        "birthDate": "1965-04-12"
+      }
+    }
+  ]
+}

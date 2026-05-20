@@ -12,6 +12,7 @@ skills-lock.json
 .env.local
 .env.*.local
 *.log
+*.tsbuildinfo
 .DS_Store
 .vscode/
 .idea/

@@ -1,0 +1,23 @@
+{
+  "name": "agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "langgraphjs dev",
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@clinical-trial-matching/shared": "workspace:*",
+    "@langchain/core": "1.1.47",
+    "@langchain/langgraph": "1.3.2",
+    "@langchain/openai": "1.4.6",
+    "neo4j-driver": "6.0.1",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@langchain/langgraph-cli": "1.2.2",
+    "typescript": "6.0.3"
+  }
+}
