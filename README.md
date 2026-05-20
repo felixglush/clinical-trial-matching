@@ -4,6 +4,32 @@ A patient-to-trial matching workflow that augments standard eligibility matching
 
 Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys as a Next.js app (Vercel) + LangGraph agent (LangGraph Platform) backed by a Neo4j knowledge graph.
 
+## Workflow
+
+![Workflow graph](docs/images/workflow-topology.png)
+
+### Nodes
+
+**Main graph**
+
+- `extract-patient-profile` — Load the patient's FHIR bundle and use an LLM to distill it into a structured `PatientProfile` (conditions, medications, prior treatments, demographics).
+- `identify-relevant-mechanisms` — For each condition, query Neo4j/PrimeKG for associated genes and pathways; LLM picks the most clinically relevant.
+- `find-repurposing-candidates` — KG query for drugs that target the identified pathways but are approved for *other* conditions; LLM narrates the repurposing rationale.
+- `generate-search-strategy` — LLM composes condition + mechanism search terms for ClinicalTrials.gov. On retry, broadens the strategy.
+- `search-trials` — Two CT.gov queries — one condition-based, one drug-based (from the repurposing candidates) — unioned and deduped by NCT ID.
+- `pre-filter` — Cheap LLM-as-judge pass to drop obvious non-matches before the expensive per-trial evaluation.
+- `route-after-pre-filter` *(conditional edge)* — If too few candidates survived and attempts remain, loop back to `generate-search-strategy` to broaden; otherwise fan out the top N candidates into the trial-eval subgraph via `Send`.
+- `rank-and-synthesize` — After fan-out completes, LLM reranks matches end-to-end (eligibility + mechanism + literature) and assembles the approval request.
+- `human-approval` — `interrupt()` for human review; supports approve / reject / edit.
+
+**Per-trial evaluation subgraph**
+
+- `eligibility-check` — LLM per-criterion analysis of inclusion/exclusion against the patient profile.
+- `mechanism-plausibility` — KG path search (intervention → patient's condition); LLM scores how plausible the mechanism is.
+- `literature-support` — PubMed query for trial drug + condition + mechanism; collect citations.
+- `decide-if-more-evidence` *(conditional edge)* — If literature coverage is thin and attempts remain, loop back to `literature-support` with a broader query.
+- `synthesize-match` — Combine eligibility + mechanism + literature into a final `TrialMatch` with a combined score.
+
 ## Repo layout
 
 ```
