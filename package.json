@@ -1,0 +1,22 @@
+{
+  "name": "clinical-trial-matching",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel run dev",
+    "dev:agent": "pnpm --filter agent dev",
+    "dev:web": "pnpm --filter web dev",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "pnpm -r run lint",
+    "patients:generate": "./scripts/generate-patients.sh"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "prettier": "3.8.3"
+  }
+}
