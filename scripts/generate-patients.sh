@@ -1,28 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Generates synthetic FHIR patient bundles using Synthea and copies them to data/patients/.
-# Requires Java 11+.
+# Generates a deterministic 200-patient pool via Synthea into data/synthea-output/.
+# The four archetype patients (see packages/shared/src/patient-fixtures.ts) are
+# resolved by UUID from this pool by the loaders — no copy step.
+#
+# Requires Java 11+ and synthea-with-dependencies.jar in data/.
+# Re-running with seed=42 produces byte-identical bundles.
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SYNTHEA_DIR="${REPO_ROOT}/.synthea"
-OUT_DIR="${REPO_ROOT}/data/patients"
-N_PATIENTS="${1:-10}"
+DATA="${REPO_ROOT}/data"
+JAR="${DATA}/synthea-with-dependencies.jar"
+OUT="${DATA}/synthea-output"
 
-if ! command -v java >/dev/null 2>&1; then
-  echo "Error: Java is not installed. Install Java 11+ first." >&2
+# Java: prefer PATH; fall back to brew openjdk@17 (keg-only on macOS).
+if command -v java >/dev/null 2>&1; then
+  JAVA=java
+elif [[ -x /opt/homebrew/opt/openjdk@17/bin/java ]]; then
+  JAVA=/opt/homebrew/opt/openjdk@17/bin/java
+else
+  echo "ERROR: Java not found. Install with: brew install openjdk@17" >&2
   exit 1
 fi
 
-if [ ! -d "${SYNTHEA_DIR}" ]; then
-  echo "Cloning Synthea..."
-  git clone --depth 1 https://github.com/synthetichealth/synthea.git "${SYNTHEA_DIR}"
+if [[ ! -f "${JAR}" ]]; then
+  echo "ERROR: Synthea jar not found at ${JAR}" >&2
+  echo "Download synthea-with-dependencies.jar from:" >&2
+  echo "  https://github.com/synthetichealth/synthea/releases/latest" >&2
+  exit 1
 fi
 
-cd "${SYNTHEA_DIR}"
-./run_synthea -p "${N_PATIENTS}"
+if [[ -d "${OUT}/fhir" ]] && [[ -n "$(ls -A "${OUT}/fhir" 2>/dev/null)" ]]; then
+  echo "Synthea output already present at ${OUT}/fhir — nothing to do."
+  echo "(Delete ${OUT} to regenerate.)"
+  exit 0
+fi
 
-mkdir -p "${OUT_DIR}"
-cp "${SYNTHEA_DIR}"/output/fhir/*.json "${OUT_DIR}/"
+echo "Generating 200-patient pool (seed=42, this takes a few minutes)..."
+cd "${DATA}"
+"${JAVA}" -jar "${JAR}" \
+  -s 42 -p 200 -a 30-80 \
+  --exporter.fhir.use_us_core_ig true \
+  --exporter.baseDirectory ./synthea-output \
+  Massachusetts
 
-echo "Generated ${N_PATIENTS} patients into ${OUT_DIR}"
+echo ""
+echo "Done. Bundles in ${OUT}/fhir"
+echo "Loader will pick the four archetype patients by UUID:"
+echo "  hedy-sauer      8af9d5d7-2600-556b-5158-64501509f9f5"
+echo "  brady-schmidt   8580a690-4d97-5739-4f07-788ad44e6f04"
+echo "  pamela-lesch    6bc4cd5d-0216-17a9-8192-ac2209957d3a"
+echo "  marvin-weissnat 4aaa0001-3832-cc52-e2f3-47aad08f4284"
