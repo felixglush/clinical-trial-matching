@@ -1,46 +1,83 @@
-# Patient-to-Trial Matching: Project Skeleton Design
+# Patient-to-Trial Matching with Mechanism Reasoning: Skeleton Design
 
 **Date:** 2026-05-19
 **Status:** Approved (skeleton scope only — node implementations are out of scope)
-**Scope:** Repository structure and skeleton files for a patient-to-trial matching workflow built with LangGraph.js, deployed as Next.js (Vercel) + LangGraph Agent (LangGraph Platform).
+**Scope:** Repository structure and skeleton files for a patient-to-trial matching workflow augmented with biomedical knowledge graph reasoning. Built with LangGraph.js. Deployed as Next.js (Vercel) + LangGraph Agent (LangGraph Platform) + local Neo4j (Aura/self-host later).
 
 ## Goal
 
-Stand up the project skeleton — directory structure, package boundaries, configuration files, local dev workflow — so we can implement the matching workflow incrementally, node by node, in subsequent passes. No business logic is built in this phase; every node is a stub.
+Stand up the project skeleton — directory structure, package boundaries, configuration files, local dev workflow — so the mechanism-augmented matching workflow can be implemented incrementally, node by node, in subsequent passes. No business logic is built in this phase; every node is a stub.
+
+## Three data sources, three roles
+
+| Source | Role |
+|---|---|
+| **Synthea (FHIR)** | Synthetic patient data — conditions, meds, prior treatments. Grounds the workflow in a specific patient. |
+| **PrimeKG (subset)** | Biomedical knowledge graph — drugs, diseases, genes, pathways. Provides mechanism reasoning and surfaces drug repurposing candidates. |
+| **ClinicalTrials.gov** | Recruiting trials by condition or intervention. The actionable destination. |
+| **PubMed** | Literature support for mechanism hypotheses (evidence retrieval during per-trial evaluation). |
 
 ## Workflow being supported (for context only)
 
 ```
-extract_patient_profile
+extract_patient_profile          (Synthea FHIR → structured profile)
         ↓
-generate_search_strategy ←─┐
-        ↓                  │ (broaden, attempts < 3)
-   search_trials           │
-        ↓                  │
-   pre_filter ─────────────┘  if candidates < threshold
+identify_relevant_mechanisms     (KG: patient conditions → genes / pathways)
         ↓
- fan_out_evaluations ── Send → [trial_eval_subgraph] × N
+        ├───────────────────────────────────────────┐
+        ↓                                           ↓
+generate_search_strategy             find_repurposing_candidates
+  (condition + mechanism terms)        (KG: pathways → drugs
+        ↓                                approved for other conditions)
+        │                                           ↓
+        └───────────────────┬───────────────────────┘
+                            ↓
+                      search_trials
+                      (two CT.gov queries: condition-based AND
+                       drug-name-based; unioned, deduped)
+                            ↓
+                       pre_filter ──── (broaden if too few; attempts < 3)
+                            ↓
+                fan_out_evaluations  ── Send → [trial_eval_subgraph] × N
+                            ↓
+                            ↓  (matches accumulated via reducer)
+                            ↓
+                     rank_and_synthesize
+                     (eligibility + mechanism + evidence → score)
+                            ↓
+                     human_approval (interrupt)
+                            ↓
+                           END
+
+trial_eval_subgraph (per trial):
+  eligibility_check ── (Synthea profile vs trial criteria)
         ↓
-        ↓  (matches accumulated via reducer)
+  mechanism_plausibility ── (KG paths: intervention → patient's disease)
         ↓
- rank_and_synthesize
+  literature_support ── (PubMed for trial drug + disease + mechanism)
         ↓
- human_approval (interrupt)
+  decide_if_more_evidence ── (confidence < threshold && attempts < 2)
+        │                                 ↓
+        │                       (cycle: fetch broader PubMed query → re-eval)
         ↓
-       END
+  synthesize_match ── (TrialMatch with all scores + repurposing_rationale)
 ```
 
-Skeleton creates all node files, the subgraph, the state schema, and the graph wiring — but node bodies are placeholder stubs.
+Skeleton creates all files for this workflow but leaves node bodies as stubs.
 
 ## Architectural decisions
 
 - **Language:** TypeScript end-to-end (LangGraph.js + Next.js).
 - **Frontend deploy:** Vercel.
 - **Graph runtime deploy:** LangGraph Platform (managed). Picked over self-hosted Agent Server (no infra to manage) and over library-mode-in-Next.js (fan-out workflows exceed Vercel function timeouts).
+- **Knowledge graph backend:** **Neo4j**, local for prototype. Use [Neo4j Desktop](https://neo4j.com/download/) for easy click-to-start and the Browser UI for ad-hoc Cypher exploration (or `docker run neo4j` if preferred). Production hosting is a deferred decision (Aura paid, self-hosted on Railway/Fly.io, etc.).
+- **Knowledge graph data:** **PrimeKG subset** — drugs, diseases, genes/proteins, biological processes. Drop side effects, exposures, anatomy for prototype. Targets ~10K nodes / ~500K edges. Loaded offline once via Cypher import.
+- **PubMed:** E-utilities REST API — no auth, no SDK, plain `fetch`.
 - **Repo layout:** pnpm workspaces monorepo. Verified that both Vercel and LangGraph Platform natively support workspace deps via `workspace:*`.
 - **LLM:** Anthropic Claude via `@langchain/anthropic`.
-- **Local dev:** `langgraph dev` (agent on :2024 with Studio) + `next dev` (web on :3000).
+- **Local dev:** `langgraph dev` (agent on :2024 with Studio) + `next dev` (web on :3000) + Neo4j Desktop on bolt://localhost:7687.
 - **Synthea integration:** offline only — generate FHIR bundles via a script, commit a small sample set to `data/patients/`. Not a runtime dependency.
+- **PrimeKG integration:** offline only — download CSVs, filter to subset, run Cypher LOAD into local Neo4j via a script. Not redownloaded at runtime.
 
 ## Repository structure
 
@@ -63,10 +100,13 @@ Skeleton creates all node files, the subgraph, the state schema, and the graph w
 │   └── shared/                         # @clinical-trial-matching/shared (zod schemas + types)
 │
 ├── data/
-│   └── patients/                       # Synthea FHIR bundle samples (committed)
+│   ├── patients/                       # Synthea FHIR bundle samples (committed)
+│   └── kg/                             # PrimeKG subset CSVs (gitignored; loaded into Neo4j)
 │
 ├── scripts/
 │   ├── generate-patients.sh            # wraps Synthea JAR
+│   ├── build-primekg-subset.ts         # downloads + filters PrimeKG CSVs
+│   ├── load-primekg-to-neo4j.cypher    # Cypher LOAD CSV script
 │   └── README.md
 │
 └── docs/
@@ -80,10 +120,11 @@ Owns the graph, state, nodes, subgraph, tools, and prompts. Deploys to LangGraph
 ```
 apps/agent/
 ├── langgraph.json                      # Platform deploy config; entrypoint ./src/graph.ts:graph
-├── package.json                        # @langchain/langgraph, @langchain/anthropic, zod,
+├── package.json                        # @langchain/langgraph, @langchain/anthropic,
+│                                       #   neo4j-driver, zod,
 │                                       #   @clinical-trial-matching/shared: workspace:*
 ├── tsconfig.json                       # extends tsconfig.base.json
-├── .env.example                        # ANTHROPIC_API_KEY, LANGSMITH_*
+├── .env.example                        # ANTHROPIC_API_KEY, LANGSMITH_*, NEO4J_*
 └── src/
     ├── graph.ts                        # main StateGraph; exports `graph`
     ├── state.ts                        # Annotation + reducers (matches concat, attempts counter)
@@ -91,27 +132,41 @@ apps/agent/
     │
     ├── nodes/                          # one file per node
     │   ├── extract-patient-profile.ts
+    │   ├── identify-relevant-mechanisms.ts
+    │   ├── find-repurposing-candidates.ts
     │   ├── generate-search-strategy.ts
     │   ├── search-trials.ts
     │   ├── pre-filter.ts
-    │   ├── fan-out-evaluations.ts      # returns Send[] for parallel eval
+    │   ├── route-after-pre-filter.ts   # routing fn: broaden | Send[] for fan-out
     │   ├── rank-and-synthesize.ts
     │   └── human-approval.ts           # calls interrupt()
     │
     ├── subgraphs/
     │   └── trial-eval/
-    │       ├── graph.ts                # per-trial eval subgraph
-    │       └── state.ts                # subgraph-local state
+    │       ├── graph.ts                # per-trial eval subgraph with evidence-fetch cycle
+    │       ├── state.ts                # subgraph-local state
+    │       └── nodes/
+    │           ├── eligibility-check.ts
+    │           ├── mechanism-plausibility.ts
+    │           ├── literature-support.ts
+    │           ├── decide-if-more-evidence.ts  # routing fn for the cycle
+    │           └── synthesize-match.ts
     │
     ├── tools/
     │   ├── clinicaltrials.ts           # clinicaltrials.gov v2 REST client
+    │   ├── kg.ts                       # Neo4j driver + typed Cypher query helpers
+    │   ├── pubmed.ts                   # PubMed E-utilities REST client
     │   └── patient-loader.ts           # reads data/patients/ FHIR bundles
     │
     └── prompts/                        # extracted prompt templates
         ├── extract-profile.ts
+        ├── mechanism.ts
+        ├── repurposing.ts
         ├── search-strategy.ts
         ├── pre-filter.ts
-        ├── trial-eval.ts
+        ├── eligibility.ts
+        ├── mechanism-plausibility.ts
+        ├── literature-synthesis.ts
         └── rank.ts
 ```
 
@@ -171,7 +226,9 @@ apps/web/
     │   │   ├── index.tsx
     │   │   ├── graph-timeline.tsx              # nodes as steps: running/done/pending
     │   │   ├── reasoning-trace.tsx             # per-node LLM output, streamed
-    │   │   ├── candidates-panel.tsx            # trials as they're added/filtered/ranked
+    │   │   ├── mechanisms-panel.tsx            # KG-derived mechanisms + repurposing candidates
+    │   │   ├── candidates-panel.tsx            # trials as they're added/filtered/ranked,
+    │   │   │                                     # with mechanism + repurposing badges per match
     │   │   └── approval-panel.tsx              # interrupt UI: approve / reject / edit
     │   └── chat/
     │       └── placeholder.tsx
@@ -207,11 +264,18 @@ packages/shared/
 └── src/
     ├── index.ts                        # barrel export
     ├── patient.ts                      # PatientProfile schema
+    ├── mechanism.ts                    # Mechanism (gene/pathway/process + KG path evidence)
+    ├── repurposing.ts                  # RepurposingCandidate (drug + original indication
+    │                                   #   + mechanism rationale)
     ├── search.ts                       # SearchStrategy schema
-    ├── trial.ts                        # TrialCandidate (raw CT.gov) + TrialMatch (evaluated)
+    ├── trial.ts                        # TrialCandidate (raw CT.gov) + TrialMatch (extended:
+    │                                   #   mechanismScore, literatureSupport,
+    │                                   #   repurposingRationale)
     ├── eligibility.ts                  # EligibilityAssessment (per-criterion)
+    ├── pubmed.ts                       # Citation (pmid, title, abstract excerpt, year)
     ├── run.ts                          # ApprovalRequest, ApprovalResponse, RunStatus
-    └── state.ts                        # public GraphState shape (web's subscribe surface)
+    └── state.ts                        # public GraphState shape; now includes
+                                        #   mechanisms, repurposingCandidates
 ```
 
 **Conventions:**
@@ -234,7 +298,9 @@ packages/shared/
     "build": "pnpm -r build",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck",
-    "patients:generate": "./scripts/generate-patients.sh"
+    "patients:generate": "./scripts/generate-patients.sh",
+    "kg:build-subset": "tsx scripts/build-primekg-subset.ts",
+    "kg:load": "cypher-shell -u $NEO4J_USERNAME -p $NEO4J_PASSWORD -a $NEO4J_URI -f scripts/load-primekg-to-neo4j.cypher"
   }
 }
 ```
@@ -252,11 +318,13 @@ packages:
 ## Local dev workflow
 
 1. `pnpm install` from repo root.
-2. `pnpm dev`:
-   - `apps/agent`: `langgraph dev` starts the Agent Server on `localhost:2024` with embedded Postgres, hot reload, and Studio UI.
+2. **One-time:** install [Neo4j Desktop](https://neo4j.com/download/), create a local DBMS (any name; password is what you'll put in `.env`), and start it. Browser UI runs on `http://localhost:7474`; bolt protocol on `bolt://localhost:7687`.
+3. **One-time:** seed the KG: `pnpm kg:build-subset && pnpm kg:load`. This downloads PrimeKG CSVs, filters to subset, and imports into Neo4j. Takes a few minutes.
+4. `pnpm dev`:
+   - `apps/agent`: `langgraph dev` starts the Agent Server on `localhost:2024` with embedded Postgres, hot reload, and Studio UI. Connects to Neo4j over bolt for KG queries.
    - `apps/web`: `next dev` on `localhost:3000`; `.env.local` points `LANGGRAPH_API_URL=http://localhost:2024`.
-3. Visit `localhost:3000`: pick a patient, run a match, watch streaming output.
-4. Studio at `localhost:2024` for low-level graph debugging.
+5. Visit `localhost:3000`: pick a patient, run a match, watch streaming output (including mechanism reasoning and repurposing candidates).
+6. Studio at `localhost:2024` for low-level graph debugging. Neo4j Browser at `localhost:7474` for ad-hoc Cypher.
 
 ## Environment variables
 
@@ -265,6 +333,11 @@ packages:
 ANTHROPIC_API_KEY=
 LANGSMITH_API_KEY=                      # optional, enables tracing in dev
 LANGSMITH_TRACING=true
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USERNAME=neo4j
+NEO4J_PASSWORD=                         # whatever you set in Neo4j Desktop
+NEO4J_DATABASE=neo4j
+PUBMED_API_KEY=                         # optional; raises rate limit from 3 to 10 req/sec
 
 # apps/web/.env.local
 LANGGRAPH_API_URL=http://localhost:2024
@@ -275,16 +348,31 @@ LANGGRAPH_API_KEY=                      # only needed against deployed Platform
 
 `scripts/generate-patients.sh` clones Synthea on first run, generates N FHIR bundles into `data/patients/`, prints sample IDs. Documented in `scripts/README.md` (requires Java 11+). Skeleton commits 3–5 representative patient bundles so the app boots without anyone installing Java.
 
+## PrimeKG integration
+
+`scripts/build-primekg-subset.ts` downloads PrimeKG node and edge CSVs from Harvard Dataverse (~600MB total), filters to the subset (drug, disease, gene/protein, biological_process), and writes filtered CSVs to `data/kg/`. `scripts/load-primekg-to-neo4j.cypher` does `LOAD CSV WITH HEADERS` to import the subset into the local Neo4j instance — creating constraints (uniqueness on node `id`) and indexes (by `name` and `type`) before bulk loading edges. Both steps documented in `scripts/README.md`.
+
+The agent's `tools/kg.ts` opens a single shared `Driver` at module init, exposes typed helpers:
+- `findGeneTargetsForDisease(diseaseId): Promise<Gene[]>`
+- `findSharedPathways(diseaseId, depth): Promise<Pathway[]>`
+- `findDrugsTargetingPathways(pathwayIds): Promise<{ drug, indication, path }[]>`
+- `pathBetween(fromId, toId, maxHops): Promise<KGPath[]>`
+
+`data/kg/` is gitignored — large CSVs aren't committed. Anyone cloning the repo runs `pnpm kg:build-subset && pnpm kg:load` once.
+
 ## Deliberately out of scope (for skeleton)
 
-- Node implementations — all stubs.
+- Node implementations — all stubs (including KG and PubMed tool stubs that throw).
 - Prompt content — empty templates with TODOs.
 - Auth (Clerk/NextAuth) — open access locally; revisit before public deploy.
 - Real-time progress visualization beyond a basic list.
 - Turborepo/Nx — pnpm `-r` is enough at this scale.
 - Vitest/Jest setup — add when there's real logic to test.
 - CI workflows — add when there's a test suite to gate on.
-- Docker — LangGraph CLI handles its own containerization.
+- Docker — LangGraph CLI handles its own containerization. Neo4j runs via Neo4j Desktop.
+- **Production KG hosting** — deferred. Local Neo4j is sufficient for prototype; pick Aura paid / self-hosted later if needed.
+- **Embedding / vector search** — could augment KG traversals later (semantic neighbor lookup for ambiguous condition names). Not in scope yet.
+- **Full PrimeKG** — only the drug/disease/gene/process subset. Side effects, exposures, anatomy ignored.
 
 ## Verification
 
