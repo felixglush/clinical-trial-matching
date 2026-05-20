@@ -2,11 +2,60 @@
 
 A patient-to-trial matching workflow that augments standard eligibility matching with **biomedical knowledge graph reasoning**. Given a patient's FHIR record, it identifies relevant disease mechanisms, surfaces drug-repurposing candidates from [PrimeKG](https://zitniklab.hms.harvard.edu/projects/PrimeKG/), queries [ClinicalTrials.gov](https://clinicaltrials.gov/) for recruiting trials, and ranks each match on a combined eligibility + mechanism + PubMed-evidence score.
 
-Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys as a Next.js app (Vercel) + LangGraph agent (LangGraph Platform) backed by a Neo4j knowledge graph.
+Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys as a Next.js app (Vercel) + LangGraph agent backed by a Neo4j knowledge graph.
 
 ## Workflow
 
-![Workflow graph](docs/images/workflow-topology.png)
+```
+                       START
+                         │
+                         ▼
+            extract-patient-profile
+                         │
+                         ▼
+          identify-relevant-mechanisms
+                  │              │
+                  ▼              ▼
+ find-repurposing-      generate-search-strategy ◀──┐
+     candidates                                     │
+                  │              │                  │
+                  └──────┬───────┘                  │
+                         ▼                          │
+                   search-trials                    │
+                         │                          │
+                         ▼                          │
+                    pre-filter ─── too few ─────────┘
+                         │        (attempts < 3)
+                         ▼
+        Send × N  →  trial-eval-subgraph   (see below)
+                         │
+                         ▼
+                 rank-and-synthesize
+                         │
+                         ▼
+                   human-approval         (interrupt for review)
+                         │
+                         ▼
+                        END
+```
+
+**trial-eval-subgraph** (one instance per candidate):
+
+```
+            eligibility-check
+                    │
+                    ▼
+          mechanism-plausibility
+                    │
+                    ▼
+           literature-support  ◀──┐
+                    │             │
+                    ▼             │
+           < 3 citations? ────────┘
+                    │  (attempts < 2)
+                    ▼  (else)
+             synthesize-match
+```
 
 ### Nodes
 
