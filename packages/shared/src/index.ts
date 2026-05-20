@@ -1,4 +1,5 @@
 export * from "./patient.js";
+export * from "./patient-fixtures.js";
 export * from "./mechanism.js";
 export * from "./repurposing.js";
 export * from "./pubmed.js";

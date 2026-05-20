@@ -38,6 +38,11 @@ async function download(url: string, destPath: string) {
   );
 }
 
+// PrimeKG distributes nodes.csv as TAB-separated with quoted string fields,
+// and edges.csv as comma-separated with no quoting. Strip surrounding quotes
+// from node fields so values can be compared as plain strings.
+const unquote = (s: string) => s.replace(/^"(.*)"$/, "$1");
+
 async function filterNodes(srcPath: string, destPath: string): Promise<Set<string>> {
   const keptIds = new Set<string>();
   const out = createWriteStream(destPath);
@@ -46,22 +51,28 @@ async function filterNodes(srcPath: string, destPath: string): Promise<Set<strin
   let typeIdx = -1;
   let idIdx = -1;
   for await (const line of rl) {
-    const cols = line.split(",");
+    const cols = line.split("\t").map(unquote);
     if (!header) {
       header = cols;
       typeIdx = header.indexOf("node_type");
       idIdx = header.indexOf("node_index");
-      out.write(line + "\n");
+      if (typeIdx === -1 || idIdx === -1) {
+        throw new Error(`nodes.csv header missing node_type or node_index: ${cols.join(" | ")}`);
+      }
+      out.write(cols.join("\t") + "\n");
       continue;
     }
     if (KEPT_NODE_TYPES.has(cols[typeIdx]!)) {
       keptIds.add(cols[idIdx]!);
-      out.write(line + "\n");
+      out.write(cols.join("\t") + "\n");
     }
   }
   out.end();
   await finished(out);
   console.log(`kept ${keptIds.size} nodes`);
+  if (keptIds.size === 0) {
+    throw new Error("filter produced no nodes — KEPT_NODE_TYPES likely does not match PrimeKG values");
+  }
   return keptIds;
 }
 
@@ -78,6 +89,9 @@ async function filterEdges(srcPath: string, destPath: string, keptIds: Set<strin
       header = cols;
       srcIdx = header.indexOf("x_index");
       dstIdx = header.indexOf("y_index");
+      if (srcIdx === -1 || dstIdx === -1) {
+        throw new Error(`edges.csv header missing x_index or y_index: ${cols.join(" | ")}`);
+      }
       out.write(line + "\n");
       continue;
     }

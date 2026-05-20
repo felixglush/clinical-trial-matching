@@ -79,15 +79,54 @@ Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys 
 - `decide-if-more-evidence` *(conditional edge)* — If literature coverage is thin and attempts remain, loop back to `literature-support` with a broader query.
 - `synthesize-match` — Combine eligibility + mechanism + literature into a final `TrialMatch` with a combined score.
 
+## Data sources
+
+Four external datasets feed the workflow. Two are offline (generated/loaded once, then read from disk or Neo4j); two are queried over REST at runtime.
+
+### Synthea — patient input (offline)
+
+[Synthea](https://github.com/synthetichealth/synthea) is MITRE's synthetic-patient simulator. It produces realistic FHIR R4 bundles for fictional patients with full medical history (conditions, medications, encounters, labs).
+
+- **Role:** Grounds matching in a specific patient. `extract-patient-profile` reads the bundle.
+- **Integration:** `pnpm patients:generate` runs the JAR with a fixed seed to produce a deterministic 200-patient pool in `data/synthea-output/`; the loaders ([apps/agent/src/tools/patient-loader.ts](apps/agent/src/tools/patient-loader.ts), [apps/web/src/lib/patients-loader.ts](apps/web/src/lib/patients-loader.ts)) resolve four pre-selected archetype patients by UUID from that pool. See [data/patients.md](data/patients.md) for the archetype roster and the rationale for each.
+- **Requires:** Java 11+ and `data/synthea-with-dependencies.jar`. Free, no auth.
+
+### PrimeKG — biomedical knowledge graph (offline)
+
+[PrimeKG](https://zitniklab.hms.harvard.edu/projects/PrimeKG/) is the Zitnik Lab's precision-medicine KG, integrating 20 biomedical sources (DrugBank, DisGeNET, Reactome, MONDO, …) into ~129K nodes and ~4M edges across diseases, drugs, genes/proteins, pathways, side effects, exposures, phenotypes, anatomy.
+
+- **Role:** Mechanism reasoning (`identify-relevant-mechanisms`, `mechanism-plausibility`) and drug repurposing (`find-repurposing-candidates`). KG paths from a patient's conditions → genes/pathways → drugs surface repurposing candidates and let us score how plausible a trial intervention is for the patient's biology.
+- **Integration:** `pnpm kg:build-subset` downloads PrimeKG CSVs from Harvard Dataverse (~600MB) and filters to a 4-type subset (drug + disease + gene/protein + biological_process — dropping side effects, exposures, anatomy, phenotypes, which aren't load-bearing for mechanism/repurposing). `pnpm kg:load` imports into a local Neo4j instance via `LOAD CSV`. A single shared `neo4j-driver` is opened at agent startup; typed Cypher helpers live in `apps/agent/src/tools/kg.ts`.
+- **Resolution caveat:** PrimeKG captures *associations*, not biomarker-level predictions. It will tell you "EGFR is implicated in NSCLC" and "osimertinib targets EGFR" — it won't tell you "EGFR T790M mutation predicts osimertinib response." For mutation-precise matching we'd layer in OncoKB / CIViC / COSMIC later.
+- **Requires:** Neo4j Desktop (or `docker run neo4j`). Free, no auth (Creative Commons license).
+
+### ClinicalTrials.gov — recruiting trials (runtime)
+
+NIH's [ClinicalTrials.gov](https://clinicaltrials.gov/) v2 REST API exposes trial metadata: NCT ID, conditions, interventions, eligibility criteria, recruitment status, locations, contacts.
+
+- **Role:** The actionable destination. `search-trials` issues two queries per run — one by condition terms, one by drug names from the repurposing candidates — then unions and dedupes by NCT ID. Per-trial eligibility scoring runs in the fan-out subgraph.
+- **Integration:** Runtime REST calls, no SDK, plain `fetch` from `apps/agent/src/tools/clinicaltrials.ts`.
+- **Requires:** Nothing. Free, no auth, generous rate limits.
+
+### PubMed — literature evidence (runtime)
+
+NLM's [PubMed](https://pubmed.ncbi.nlm.nih.gov/) database (~35M biomedical citations), accessed via the E-utilities REST API (`esearch`, `efetch`, `esummary`).
+
+- **Role:** Evidence retrieval inside the trial-eval subgraph. `literature-support` queries PubMed for citations supporting each candidate trial's drug + condition + mechanism. Thin hits trigger the `decide-if-more-evidence` loop, which broadens the query and retries.
+- **Integration:** Runtime REST calls, no SDK, plain `fetch` from `apps/agent/src/tools/pubmed.ts`.
+- **Requires:** Nothing. Optional `PUBMED_API_KEY` raises rate limit from 3 → 10 req/sec.
+
 ## Repo layout
 
 ```
-apps/agent/         LangGraph workflow (deploys to LangGraph Platform)
-apps/web/           Next.js app (deploys to Vercel)
-packages/shared/    Shared zod schemas + types
-data/patients/      Synthea-generated FHIR bundle samples
-scripts/            Tooling (Synthea runner, etc.)
-docs/superpowers/   Design specs and implementation plans
+apps/agent/             LangGraph workflow (deploys to LangGraph Platform)
+apps/web/               Next.js app (deploys to Vercel)
+packages/shared/        Shared zod schemas + types + patient-fixtures
+data/synthea-output/    Synthea FHIR bundles (gitignored; generated locally)
+data/kg/                PrimeKG subset CSVs (gitignored; built locally)
+data/patients.md        Archetype patient roster
+scripts/                Tooling (Synthea runner, PrimeKG subset builder, etc.)
+docs/superpowers/       Design specs and implementation plans
 ```
 
 ## Local dev
