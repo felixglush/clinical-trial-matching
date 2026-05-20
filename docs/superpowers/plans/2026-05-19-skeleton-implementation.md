@@ -6,7 +6,7 @@
 
 **Architecture:** pnpm workspace monorepo. `apps/agent` (LangGraph.js workflow → LangGraph Platform), `apps/web` (Next.js → Vercel), `packages/shared` (zod schemas + types). Knowledge graph: local Neo4j Desktop, queried over `bolt://`. PubMed: plain REST, no auth.
 
-**Tech Stack:** TypeScript 5.6.3, pnpm 9, Node 20, Next.js 15.0.3, LangGraph.js (`@langchain/langgraph` 0.2.36), LangGraph SDK (`@langchain/langgraph-sdk` 0.0.32), `@langchain/anthropic` 0.3.7, `neo4j-driver` 5.26.0, zod 3.23.8, Tailwind 3.4.14, shadcn/ui.
+**Tech Stack:** TypeScript 5.6.3, pnpm 9, Node 20, Next.js 15.0.3, LangGraph.js (`@langchain/langgraph` 0.2.36), LangGraph SDK (`@langchain/langgraph-sdk` 0.0.32), `@langchain/openai` 0.3.14 (pointed at OpenRouter), `neo4j-driver` 5.26.0, zod 3.23.8, Tailwind 3.4.14, shadcn/ui.
 
 **Conventions:**
 - All package.json dependency versions are exact (no `^`/`~`). See [CLAUDE.md](../../../CLAUDE.md).
@@ -259,13 +259,13 @@ docs/superpowers/   Design specs and implementation plans
 
 ## Local dev
 
-Prerequisites: Node 20, pnpm 9, `ANTHROPIC_API_KEY`, [Neo4j Desktop](https://neo4j.com/download/) (or Docker).
+Prerequisites: Node 20, pnpm 9, `OPENROUTER_API_KEY`, [Neo4j Desktop](https://neo4j.com/download/) (or Docker).
 
 ```bash
 pnpm install
 cp apps/agent/.env.example apps/agent/.env
 cp apps/web/.env.example apps/web/.env.local
-# fill in ANTHROPIC_API_KEY and NEO4J_PASSWORD in apps/agent/.env
+# fill in OPENROUTER_API_KEY and NEO4J_PASSWORD in apps/agent/.env
 # start Neo4j Desktop and create a local DBMS
 pnpm dev
 ```
@@ -798,9 +798,9 @@ git commit -m "feat(shared): barrel export"
   },
   "dependencies": {
     "@clinical-trial-matching/shared": "workspace:*",
-    "@langchain/anthropic": "0.3.7",
     "@langchain/core": "0.3.18",
     "@langchain/langgraph": "0.2.36",
+    "@langchain/openai": "0.3.14",
     "neo4j-driver": "5.26.0",
     "zod": "3.23.8"
   },
@@ -830,7 +830,8 @@ git commit -m "feat(shared): barrel export"
 
 `apps/agent/.env.example`:
 ```
-ANTHROPIC_API_KEY=
+OPENROUTER_API_KEY=
+OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
 LANGSMITH_API_KEY=
 LANGSMITH_TRACING=true
 LANGSMITH_PROJECT=clinical-trial-matching
@@ -862,20 +863,36 @@ git commit -m "chore(agent): scaffold package"
 
 `apps/agent/src/llm.ts`:
 ```ts
-import { ChatAnthropic } from "@langchain/anthropic";
+import { ChatOpenAI } from "@langchain/openai";
 
-export const llm = new ChatAnthropic({
-  model: "claude-sonnet-4-6",
+const apiKey = process.env.OPENROUTER_API_KEY;
+if (!apiKey) {
+  throw new Error("OPENROUTER_API_KEY is not set");
+}
+
+export const llm = new ChatOpenAI({
+  model: process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.6",
   temperature: 0,
   maxRetries: 2,
+  apiKey,
+  configuration: {
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      // Optional but recommended — used by OpenRouter for analytics + dashboard.
+      "HTTP-Referer": "https://github.com/felixglush/clinical-trial-matching",
+      "X-Title": "Clinical Trial Matching",
+    },
+  },
 });
 ```
+
+> Model name note: `anthropic/claude-sonnet-4.6` is the OpenRouter slug at time of writing. Verify against the live model list (`https://openrouter.ai/models`) — OpenRouter renames slugs occasionally. To swap to a different provider's model, just change the env var (e.g. `OPENROUTER_MODEL=openai/gpt-4.1` or `google/gemini-2.5-pro`).
 
 - [ ] **Step 2: Commit**
 
 ```bash
 git add apps/agent/src/llm.ts
-git commit -m "feat(agent): configure shared LLM client"
+git commit -m "feat(agent): configure shared LLM client via OpenRouter"
 ```
 
 ### Task 16: `apps/agent/src/state.ts` — LangGraph Annotation
@@ -1784,11 +1801,12 @@ git commit -m "chore(agent): langgraph.json deploy config"
 
 ### Task 29: Verify `langgraph dev` boots the agent
 
-- [ ] **Step 1: Set ANTHROPIC_API_KEY in env**
+- [ ] **Step 1: Set OPENROUTER_API_KEY in env**
 
 ```bash
 cp apps/agent/.env.example apps/agent/.env
-# manually edit apps/agent/.env and set ANTHROPIC_API_KEY=<your key>
+# manually edit apps/agent/.env and set OPENROUTER_API_KEY=<your key>
+# (and NEO4J_PASSWORD if you've already done Task 42a)
 ```
 
 - [ ] **Step 2: Start the agent dev server**
@@ -3142,7 +3160,7 @@ test -f apps/agent/.env || cp apps/agent/.env.example apps/agent/.env
 test -f apps/web/.env.local || cp apps/web/.env.example apps/web/.env.local
 ```
 
-ANTHROPIC_API_KEY must be set in `apps/agent/.env`. NEO4J_PASSWORD must match the local DBMS password from Task 42a.
+OPENROUTER_API_KEY must be set in `apps/agent/.env`. NEO4J_PASSWORD must match the local DBMS password from Task 42a.
 
 - [ ] **Step 2: Start both servers**
 
