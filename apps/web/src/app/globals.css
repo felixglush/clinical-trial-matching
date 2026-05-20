@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+/* Tailwind v4 theme tokens. Extend here when shadcn primitives require
+   CSS variables for color tokens (e.g. --color-primary). For the
+   skeleton we keep this minimal — shadcn `add` commands will append
+   the variables they need. */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
