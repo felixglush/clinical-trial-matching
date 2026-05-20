@@ -74,7 +74,7 @@ Skeleton creates all files for this workflow but leaves node bodies as stubs.
 - **Knowledge graph data:** **PrimeKG subset** — drugs, diseases, genes/proteins, biological processes. Drop side effects, exposures, anatomy for prototype. Targets ~10K nodes / ~500K edges. Loaded offline once via Cypher import.
 - **PubMed:** E-utilities REST API — no auth, no SDK, plain `fetch`.
 - **Repo layout:** pnpm workspaces monorepo. Verified that both Vercel and LangGraph Platform natively support workspace deps via `workspace:*`.
-- **LLM:** Any model via [OpenRouter](https://openrouter.ai/) using `@langchain/openai`'s `ChatOpenAI` pointed at OpenRouter's OpenAI-compatible API. Default model: `anthropic/claude-sonnet-4.6`. Lets us swap models (GPT, Gemini, Llama, etc.) by changing one string. OpenRouter passes through Anthropic prompt caching for supported models — verify cache hits in OpenRouter's dashboard before assuming cost parity with direct Anthropic.
+- **LLM:** Any model via [OpenRouter](https://openrouter.ai/) using `@langchain/openai`'s `ChatOpenAI` pointed at OpenRouter's OpenAI-compatible API. Default model: `anthropic/claude-haiku-4.5` (fast, cheap, well-suited to the high-volume per-trial evaluation loop). Lets us swap models by changing one string — bump to a Sonnet/Opus for harder reasoning steps if needed. OpenRouter passes through Anthropic prompt caching for supported models — verify cache hits in OpenRouter's dashboard before assuming cost parity with direct Anthropic.
 - **Local dev:** `langgraph dev` (agent on :2024 with Studio) + `next dev` (web on :3000) + Neo4j Desktop on bolt://localhost:7687.
 - **Synthea integration:** offline only — generate FHIR bundles via a script, commit a small sample set to `data/patients/`. Not a runtime dependency.
 - **PrimeKG integration:** offline only — download CSVs, filter to subset, run Cypher LOAD into local Neo4j via a script. Not redownloaded at runtime.
@@ -190,7 +190,7 @@ apps/web/
 │                                       #   @clinical-trial-matching/shared: workspace:*
 ├── next.config.ts
 ├── tsconfig.json
-├── tailwind.config.ts
+├── (no tailwind.config — Tailwind v4 is CSS-first via @theme)
 ├── postcss.config.mjs
 ├── components.json
 ├── .env.example
@@ -331,7 +331,7 @@ packages:
 ```
 # apps/agent/.env
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=anthropic/claude-sonnet-4.6    # override default if you want a different model
+OPENROUTER_MODEL=anthropic/claude-haiku-4.5     # override default if you want a different model
 LANGSMITH_API_KEY=                      # optional, enables tracing in dev
 LANGSMITH_TRACING=true
 NEO4J_URI=bolt://localhost:7687

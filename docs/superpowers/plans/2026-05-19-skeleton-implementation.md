@@ -6,7 +6,9 @@
 
 **Architecture:** pnpm workspace monorepo. `apps/agent` (LangGraph.js workflow → LangGraph Platform), `apps/web` (Next.js → Vercel), `packages/shared` (zod schemas + types). Knowledge graph: local Neo4j Desktop, queried over `bolt://`. PubMed: plain REST, no auth.
 
-**Tech Stack:** TypeScript 5.6.3, pnpm 9, Node 20, Next.js 15.0.3, LangGraph.js (`@langchain/langgraph` 0.2.36), LangGraph SDK (`@langchain/langgraph-sdk` 0.0.32), `@langchain/openai` 0.3.14 (pointed at OpenRouter), `neo4j-driver` 5.26.0, zod 3.23.8, Tailwind 3.4.14, shadcn/ui.
+**Tech Stack:** TypeScript 6.0.3, pnpm 9, Node 20, Next.js 16.2.6, React 19.2.6, LangGraph.js (`@langchain/langgraph` 1.3.2), LangGraph SDK (`@langchain/langgraph-sdk` 1.9.4), `@langchain/openai` 1.4.6 (pointed at OpenRouter, default model `anthropic/claude-haiku-4.5`), `neo4j-driver` 6.0.1, zod 4.4.3, Tailwind 4.3.0, shadcn/ui.
+
+**LangGraph v1 note:** the `Annotation.Root(...)` API we use for state is still supported in v1 — no rewrite required. v1 introduces an alternative `StateSchema` + Zod-native API (`ReducedValue`, `MessagesValue`, etc.) that is more idiomatic alongside our Zod-based shared schemas. We're sticking with `Annotation` for the skeleton since it's already wired; migrate to `StateSchema` later if/when it pays off.
 
 **Conventions:**
 - All package.json dependency versions are exact (no `^`/`~`). See [CLAUDE.md](../../../CLAUDE.md).
@@ -37,7 +39,7 @@ Files this plan creates, grouped by phase:
 - `src/prompts/{extract-profile,mechanism,repurposing,search-strategy,pre-filter,eligibility,mechanism-plausibility,literature-synthesis,rank}.ts`
 
 **Phase 4 — `apps/web/`:**
-- `package.json`, `tsconfig.json`, `next.config.ts`, `tailwind.config.ts`, `postcss.config.mjs`, `components.json`, `.env.example`
+- `package.json`, `tsconfig.json`, `next.config.ts`, `postcss.config.mjs`, `components.json`, `.env.example` (Tailwind v4: no JS config file)
 - `src/app/{layout,page,globals.css}.tsx|css`
 - `src/app/patients/[patientId]/{layout,page}.tsx`
 - `src/app/patients/[patientId]/runs/[threadId]/page.tsx`
@@ -201,7 +203,7 @@ git commit -m "chore: configure pnpm workspaces and base tsconfig"
   "name": "clinical-trial-matching",
   "version": "0.0.0",
   "private": true,
-  "packageManager": "pnpm@9.12.3",
+  "packageManager": "pnpm@9.15.0",
   "engines": {
     "node": "20"
   },
@@ -215,8 +217,8 @@ git commit -m "chore: configure pnpm workspaces and base tsconfig"
     "patients:generate": "./scripts/generate-patients.sh"
   },
   "devDependencies": {
-    "typescript": "5.6.3",
-    "prettier": "3.3.3"
+    "typescript": "6.0.3",
+    "prettier": "3.8.3"
   }
 }
 ```
@@ -321,13 +323,15 @@ git commit -m "docs: add README quickstart"
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "3.23.8"
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "typescript": "5.6.3"
+    "typescript": "6.0.3"
   }
 }
 ```
+
+> Zod 4 note: most v3 schemas work unchanged in v4. Watch for: format validators moved off `z.string()` (use `z.url()`, `z.email()`, etc. standalone — already done in this plan), error message shape changed, some `.refine()` ergonomics differ.
 
 - [ ] **Step 2: Write `packages/shared/tsconfig.json`**
 
@@ -645,7 +649,7 @@ export const CitationSchema = z.object({
   title: z.string(),
   year: z.number().int().optional(),
   abstractExcerpt: z.string().optional(),
-  url: z.string().url(),
+  url: z.url(),
 });
 export type Citation = z.infer<typeof CitationSchema>;
 ```
@@ -798,15 +802,15 @@ git commit -m "feat(shared): barrel export"
   },
   "dependencies": {
     "@clinical-trial-matching/shared": "workspace:*",
-    "@langchain/core": "0.3.18",
-    "@langchain/langgraph": "0.2.36",
-    "@langchain/openai": "0.3.14",
-    "neo4j-driver": "5.26.0",
-    "zod": "3.23.8"
+    "@langchain/core": "1.1.47",
+    "@langchain/langgraph": "1.3.2",
+    "@langchain/openai": "1.4.6",
+    "neo4j-driver": "6.0.1",
+    "zod": "4.4.3"
   },
   "devDependencies": {
-    "@langchain/langgraph-cli": "0.0.21",
-    "typescript": "5.6.3"
+    "@langchain/langgraph-cli": "1.2.2",
+    "typescript": "6.0.3"
   }
 }
 ```
@@ -831,7 +835,7 @@ git commit -m "feat(shared): barrel export"
 `apps/agent/.env.example`:
 ```
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=anthropic/claude-sonnet-4.6
+OPENROUTER_MODEL=anthropic/claude-haiku-4.5
 LANGSMITH_API_KEY=
 LANGSMITH_TRACING=true
 LANGSMITH_PROJECT=clinical-trial-matching
@@ -871,7 +875,7 @@ if (!apiKey) {
 }
 
 export const llm = new ChatOpenAI({
-  model: process.env.OPENROUTER_MODEL ?? "anthropic/claude-sonnet-4.6",
+  model: process.env.OPENROUTER_MODEL ?? "anthropic/claude-haiku-4.5",
   temperature: 0,
   maxRetries: 2,
   apiKey,
@@ -886,7 +890,7 @@ export const llm = new ChatOpenAI({
 });
 ```
 
-> Model name note: `anthropic/claude-sonnet-4.6` is the OpenRouter slug at time of writing. Verify against the live model list (`https://openrouter.ai/models`) — OpenRouter renames slugs occasionally. To swap to a different provider's model, just change the env var (e.g. `OPENROUTER_MODEL=openai/gpt-4.1` or `google/gemini-2.5-pro`).
+> Model name note: `anthropic/claude-haiku-4.5` is the OpenRouter slug at time of writing. Verify against the live model list (`https://openrouter.ai/models`) — OpenRouter renames slugs occasionally. To swap to a different provider's model, just change the env var (e.g. `OPENROUTER_MODEL=openai/gpt-4.1` or `google/gemini-2.5-pro`).
 
 - [ ] **Step 2: Commit**
 
@@ -1853,28 +1857,31 @@ Expected: JSON response listing the `clinical_trial_matching` assistant.
   },
   "dependencies": {
     "@clinical-trial-matching/shared": "workspace:*",
-    "@langchain/langgraph-sdk": "0.0.32",
-    "next": "15.0.3",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
-    "class-variance-authority": "0.7.0",
+    "@langchain/langgraph-sdk": "1.9.4",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
-    "lucide-react": "0.453.0",
-    "tailwind-merge": "2.5.4"
+    "lucide-react": "1.16.0",
+    "tailwind-merge": "3.6.0"
   },
   "devDependencies": {
-    "@types/node": "20.16.13",
-    "@types/react": "18.3.12",
-    "@types/react-dom": "18.3.1",
-    "autoprefixer": "10.4.20",
-    "postcss": "8.4.47",
-    "tailwindcss": "3.4.14",
-    "typescript": "5.6.3",
-    "eslint": "8.57.1",
-    "eslint-config-next": "15.0.3"
+    "@tailwindcss/postcss": "4.3.0",
+    "@types/node": "20.19.41",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "autoprefixer": "10.5.0",
+    "postcss": "8.5.15",
+    "tailwindcss": "4.3.0",
+    "typescript": "6.0.3",
+    "eslint": "10.4.0",
+    "eslint-config-next": "16.2.6"
   }
 }
 ```
+
+> Versions verified against the npm registry at write-time. Re-run `npm view <pkg> version` if reviewing this plan months later — bump if newer stable releases exist, but spot-check breaking-change notes for major bumps (Next, React, LangGraph, Tailwind).
 
 - [ ] **Step 2: Write `apps/web/tsconfig.json`**
 
@@ -1931,39 +1938,27 @@ git add apps/web/package.json apps/web/tsconfig.json apps/web/next.config.ts app
 git commit -m "chore(web): scaffold Next.js package"
 ```
 
-### Task 31: Tailwind + shadcn config
+### Task 31: Tailwind 4 + shadcn config
 
 **Files:**
-- Create: `apps/web/tailwind.config.ts`
 - Create: `apps/web/postcss.config.mjs`
 - Create: `apps/web/components.json`
 - Create: `apps/web/src/app/globals.css`
 
-- [ ] **Step 1: Write `tailwind.config.ts`**
+> Tailwind v4 changes: no JS/TS `tailwind.config.ts` required — config is CSS-first via `@theme` directives. PostCSS plugin renamed to `@tailwindcss/postcss`. Single `@import "tailwindcss";` replaces the three `@tailwind` directives. `content` paths are auto-detected; override via `@source` in CSS if needed.
 
-`apps/web/tailwind.config.ts`:
-```ts
-import type { Config } from "tailwindcss";
-
-const config: Config = {
-  content: ["./src/**/*.{ts,tsx}"],
-  theme: { extend: {} },
-  plugins: [],
-};
-
-export default config;
-```
-
-- [ ] **Step 2: Write `postcss.config.mjs`**
+- [ ] **Step 1: Write `postcss.config.mjs`**
 
 `apps/web/postcss.config.mjs`:
 ```js
 export default {
-  plugins: { tailwindcss: {}, autoprefixer: {} },
+  plugins: { "@tailwindcss/postcss": {} },
 };
 ```
 
-- [ ] **Step 3: Write `components.json`**
+> Tailwind v4 no longer needs Autoprefixer — it ships built-in. We still pin `autoprefixer` in `package.json` because `eslint-config-next` lists it transitively; safe to remove if Next stops requiring it.
+
+- [ ] **Step 2: Write `components.json`**
 
 `apps/web/components.json`:
 ```json
@@ -1973,7 +1968,7 @@ export default {
   "rsc": true,
   "tsx": true,
   "tailwind": {
-    "config": "tailwind.config.ts",
+    "config": "",
     "css": "src/app/globals.css",
     "baseColor": "neutral",
     "cssVariables": true
@@ -1987,20 +1982,28 @@ export default {
 }
 ```
 
-- [ ] **Step 4: Write `globals.css`**
+> `tailwind.config` is empty string — shadcn's v4 setup expects no JS config file.
+
+- [ ] **Step 3: Write `globals.css`**
 
 `apps/web/src/app/globals.css`:
 ```css
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Tailwind v4 theme tokens. Extend here when shadcn primitives require
+   CSS variables for color tokens (e.g. --color-primary). For the
+   skeleton we keep this minimal — shadcn `add` commands will append
+   the variables they need. */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add apps/web/tailwind.config.ts apps/web/postcss.config.mjs apps/web/components.json apps/web/src/app/globals.css
-git commit -m "chore(web): tailwind + shadcn config"
+git add apps/web/postcss.config.mjs apps/web/components.json apps/web/src/app/globals.css
+git commit -m "chore(web): tailwind v4 + shadcn config"
 ```
 
 ### Task 32: `apps/web/src/lib/` files
@@ -2940,12 +2943,12 @@ git commit -m "chore: Synthea runner script and scripts README"
 
 - [ ] **Step 1: Add `tsx` to root `package.json` devDependencies**
 
-In root `package.json`, add `"tsx": "4.19.2"` to `devDependencies`. The full block should become:
+In root `package.json`, add `"tsx": "4.22.3"` to `devDependencies`. The full block should become:
 ```json
 "devDependencies": {
-  "prettier": "3.3.3",
-  "tsx": "4.19.2",
-  "typescript": "5.6.3"
+  "prettier": "3.8.3",
+  "tsx": "4.22.3",
+  "typescript": "6.0.3"
 }
 ```
 
