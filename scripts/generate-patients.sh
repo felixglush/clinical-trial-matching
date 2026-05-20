@@ -13,13 +13,20 @@ DATA="${REPO_ROOT}/data"
 JAR="${DATA}/synthea-with-dependencies.jar"
 OUT="${DATA}/synthea-output"
 
-# Java: prefer PATH; fall back to brew openjdk@17 (keg-only on macOS).
+# Java: prefer PATH; fall back to a keg-only brew openjdk (macOS).
+# Synthea works with Java 11+; the KG load also uses Java, so 21 covers both.
 if command -v java >/dev/null 2>&1; then
   JAVA=java
-elif [[ -x /opt/homebrew/opt/openjdk@17/bin/java ]]; then
-  JAVA=/opt/homebrew/opt/openjdk@17/bin/java
 else
-  echo "ERROR: Java not found. Install with: brew install openjdk@17" >&2
+  for candidate in /opt/homebrew/opt/openjdk@21 /opt/homebrew/opt/openjdk@25; do
+    if [[ -x "${candidate}/bin/java" ]]; then
+      JAVA="${candidate}/bin/java"
+      break
+    fi
+  done
+fi
+if [[ -z "${JAVA:-}" ]]; then
+  echo "ERROR: Java not found. Install with: brew install openjdk@21" >&2
   exit 1
 fi
 

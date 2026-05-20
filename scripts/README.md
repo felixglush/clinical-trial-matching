@@ -33,16 +33,20 @@ pnpm kg:build-subset
 
 `data/kg/` is gitignored — re-run this script on a fresh clone.
 
-## load-primekg-to-neo4j.cypher
+## load-primekg-to-neo4j.sh (+ .cypher)
 
-Bulk-loads the filtered CSVs from `data/kg/` into a local Neo4j instance using `LOAD CSV WITH HEADERS`. Creates uniqueness constraints on node `id` and indexes on `name`, `type` before loading.
+`pnpm kg:load` runs the bash wrapper, which sources `apps/agent/.env`, auto-detects the Neo4j Desktop import directory on macOS, symlinks `data/kg/{nodes,edges}.csv` into it (so the Cypher script's `file:///` paths resolve), locates the bundled `cypher-shell`, and executes [load-primekg-to-neo4j.cypher](./load-primekg-to-neo4j.cypher).
+
+The Cypher creates a uniqueness constraint on `:Node(id)` and indexes on `name` and `type`, then bulk-loads nodes (TSV) and edges (CSV, with APOC for per-row relationship types) in 5000-row transactions.
 
 Prereqs:
-- Neo4j running locally (Neo4j Desktop or `docker run neo4j`).
-- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` set in shell (or in `apps/agent/.env` and exported).
-- `cypher-shell` on PATH (ships with Neo4j Desktop and the official Docker image).
+- Neo4j Desktop running with a DBMS started, and the **APOC** plugin installed.
+- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` set in `apps/agent/.env`.
 - Filtered CSVs already in `data/kg/` (run `pnpm kg:build-subset` first).
+- Optional overrides: `NEO4J_IMPORT_DIR` (e.g., for a non-default DBMS location), `NEO4J_CYPHER_SHELL`.
 
 ```bash
 pnpm kg:load
 ```
+
+Expect 30–60 minutes for the full ~80K nodes / ~4M edges load.

@@ -15,7 +15,7 @@
     "lint": "pnpm -r run lint",
     "patients:generate": "./scripts/generate-patients.sh",
     "kg:build-subset": "tsx scripts/build-primekg-subset.ts",
-    "kg:load": "cypher-shell -f scripts/load-primekg-to-neo4j.cypher"
+    "kg:load": "./scripts/load-primekg-to-neo4j.sh"
   },
   "devDependencies": {
     "prettier": "3.8.3",
