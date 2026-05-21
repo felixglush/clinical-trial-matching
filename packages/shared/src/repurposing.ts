@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KGNodeSchema, KGPathSchema } from "./mechanism.js";
+import { KGNodeSchema, KGPathSchema } from "./mechanism";
 
 export const RepurposingCandidateSchema = z.object({
   drug: KGNodeSchema,

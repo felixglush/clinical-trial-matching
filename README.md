@@ -119,8 +119,8 @@ NLM's [PubMed](https://pubmed.ncbi.nlm.nih.gov/) database (~35M biomedical citat
 ## Repo layout
 
 ```
-apps/agent/             LangGraph workflow (deploys to LangGraph Platform)
-apps/web/               Next.js app (deploys to Vercel)
+apps/agent/             LangGraph workflow
+apps/web/               Next.js app
 packages/shared/        Shared zod schemas + types + patient-fixtures
 data/synthea-output/    Synthea FHIR bundles (gitignored; generated locally)
 data/kg/                PrimeKG subset CSVs (gitignored; built locally)
