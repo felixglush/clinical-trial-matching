@@ -848,8 +848,21 @@ The peer feeder to `find-repurposing-candidates`. Consumes `state.patientProfile
 
 The graph's `pre-filter` may route back to this node for a retry; the spec calls that "loop". The previous strategy comes in via `state.searchStrategy`, and we broaden (relax filters, generalize query terms) when it's non-null. `state.attempts` is incremented every call.
 
+**Inputs the prompt explicitly renders** (the LLM sees all of these; not just conditions + mechanisms):
+
+| Profile slice | Purpose | Goes into |
+|---|---|---|
+| `conditions[]` (active only) | Disease names for queries | Queries |
+| `mechanisms[].geneTargets`, `.pathways` | Mechanism-level query terms | Queries |
+| `mechanisms[].rationale` | Clinical context (primary driver vs comorbidity, oncology stage hints) | Queries (qualifiers) |
+| `medications[]` (active/in-progress) | Treatment-history context | Query qualifiers ("second-line", "refractory", "maintenance"). **Drug names themselves do NOT enter queries** — that's the repurposing channel. |
+| `priorTreatments[]` | Cleanest line-of-therapy signal | Query qualifiers ("treatment-naive", "post-progression", "salvage") |
+| `ageYears` | Phase + pediatric-vs-adult filter choices | **Filters only**, never queries (CT.gov full-text won't match ages usefully) |
+| `sex` | Optional filter / context | Filters only |
+
 **Files:**
 - Modify: `apps/agent/src/prompts/search-strategy.ts` — replace stub prompt, export `SearchStrategyPickSchema`.
+- Create: `apps/agent/src/prompts/search-strategy.test.ts` — rendering tests for the prompt blocks (medications, prior treatments, demographics).
 - Modify: `apps/agent/src/nodes/generate-search-strategy.ts` — replace stub with LLM call.
 - Create: `apps/agent/src/nodes/generate-search-strategy.test.ts`
 
@@ -881,27 +894,46 @@ export const SearchStrategyPickSchema = z.object({
 export type SearchStrategyPick = z.infer<typeof SearchStrategyPickSchema>;
 
 const FIRST_ATTEMPT_INSTRUCTIONS = `
-You are generating a search strategy for clinicaltrials.gov to find trials
-that may help the patient. Produce 1–4 free-text search queries combining
+You are generating a search strategy for ClinicalTrials.gov to find trials
+that may help this patient. Produce 1–4 free-text search queries combining
 the patient's primary conditions with mechanism-level terms (gene targets,
-pathway names) when they sharpen the query.
+pathway names) when they sharpen the query. When the treatment history
+warrants it (see "Use the patient's context" below), add treatment-context
+qualifiers.
 
 Each query should be a short string ClinicalTrials.gov's full-text search
-will accept — e.g. "type 2 diabetes SGLT2", "non-small cell lung carcinoma
-EGFR".
+will accept — e.g. "type 2 diabetes SGLT2", "EGFR mutant NSCLC second-line",
+"refractory rheumatoid arthritis JAK".
 
-Prefer fewer high-precision queries over many noisy ones. Avoid drug names
-in queries here — drug-specific lookups happen in a separate channel.
+Use the patient's context:
+- Active medications and prior treatments together tell you the line of
+  therapy. Treatment-naive → prefer first-line, untreated, newly-diagnosed
+  qualifiers (or no qualifier). Patient already on standard agents for the
+  same condition → consider second-line, treatment-resistant, refractory,
+  or maintenance qualifiers. Recent prior treatment with the same drug
+  class → consider salvage / post-progression. Do NOT put drug names
+  themselves in queries — drug-specific lookups happen in a separate
+  channel.
+- Use age and sex to inform FILTERS, not queries. CT.gov full-text won't
+  match age strings well. Adult patients (≥18) with limited options can
+  warrant PHASE1 inclusion; pediatric patients (<18) need pediatric trials
+  and should be flagged in broadeningApplied as a constraint to honor.
 
-Filters: prefer recruiting trials. If a phase or country is clearly
-appropriate from the profile, include it; otherwise leave that filter unset.
+Prefer fewer high-precision queries over many noisy ones.
+
+Filters: prefer recruiting trials (status: RECRUITING and/or
+NOT_YET_RECRUITING). Set phase only when clearly appropriate from the
+profile (e.g. PHASE2/PHASE3 for routine adult care; broader for limited
+options). Leave country unset unless explicit signal.
+
 broadeningApplied should be an empty list on the first attempt.
 `.trim();
 
 const BROADENING_INSTRUCTIONS = `
 A previous attempt yielded too few candidates. Broaden the strategy and
 record exactly what you changed in broadeningApplied (e.g. ["dropped phase
-filter", "generalized gene-name to pathway-family"]). Do not narrow.
+filter", "generalized SGLT2 to SGLT inhibitor", "removed second-line
+qualifier"]). Do not narrow.
 `.trim();
 
 export function searchStrategyPrompt(
@@ -916,9 +948,24 @@ export function searchStrategyPrompt(
     .map((m) => {
       const genes = m.geneTargets.slice(0, 6).map((g) => g.name).join(", ");
       const paths = m.pathways.slice(0, 6).map((p) => p.name).join(", ");
-      return `- ${m.conditionName}\n    genes: ${genes || "(none)"}\n    pathways: ${paths || "(none)"}`;
+      const rationale = m.rationale ? `\n    context: ${m.rationale}` : "";
+      return `- ${m.conditionName}\n    genes: ${genes || "(none)"}\n    pathways: ${paths || "(none)"}${rationale}`;
     })
     .join("\n");
+
+  // Active or in-progress medications only — stopped/completed agents are
+  // history, surfaced via priorTreatments. We render display only, not
+  // codes; the LLM doesn't need RxNorm to reason about line-of-therapy.
+  const activeMeds = profile.medications
+    .filter((m) => m.events.some((e) => e.status === "active" || e.status === "in-progress"))
+    .map((m) => `- ${m.display}`)
+    .join("\n");
+
+  const priorTx = profile.priorTreatments
+    .map((p) => `- ${p.display}${p.date ? ` (${p.date})` : ""}`)
+    .join("\n");
+
+  const demographics = `age: ${profile.ageYears}, sex: ${profile.sex}`;
 
   const previousBlock = previousAttempt
     ? `\nPrevious attempt (attempt ${previousAttempt.attempt}):\n  queries: ${previousAttempt.queries.join(" | ")}\n  filters: ${JSON.stringify(previousAttempt.filters)}\n  broadeningApplied: ${previousAttempt.broadeningApplied.join("; ") || "(none)"}\n`
@@ -928,17 +975,171 @@ export function searchStrategyPrompt(
     ? `${FIRST_ATTEMPT_INSTRUCTIONS}\n\n${BROADENING_INSTRUCTIONS}`
     : FIRST_ATTEMPT_INSTRUCTIONS;
 
-  return `Patient conditions:
+  return `Patient demographics:
+${demographics}
+
+Patient conditions:
 ${conditions || "(none)"}
 
 Patient mechanisms:
 ${mechBlock || "(none)"}
+
+Active medications:
+${activeMeds || "(none — treatment-naive)"}
+
+Prior treatments:
+${priorTx || "(none recorded)"}
 ${previousBlock}
 ${instructions}`;
 }
 ```
 
-- [ ] **Step 2: Write the failing test**
+- [ ] **Step 2: Write prompt-rendering tests**
+
+These verify the new blocks (medications, prior treatments, demographics) actually appear in the prompt string. The node tests below mock the LLM and so can't observe prompt content; this file fills that gap. Pattern mirrors `apps/agent/src/prompts/mechanism.test.ts`.
+
+`apps/agent/src/prompts/search-strategy.test.ts`:
+
+```ts
+import { describe, expect, it } from "vitest";
+
+import { searchStrategyPrompt } from "./search-strategy.js";
+import type {
+  Mechanism,
+  PatientProfile,
+} from "@clinical-trial-matching/shared";
+
+function makeProfile(overrides: Partial<PatientProfile> = {}): PatientProfile {
+  return {
+    id: "p1",
+    displayName: "Test Patient",
+    ageYears: 60,
+    sex: "female",
+    deceased: false,
+    conditions: [
+      {
+        code: "44054006",
+        system: "http://snomed.info/sct",
+        display: "Type 2 diabetes mellitus",
+        clinicalStatus: "active",
+      },
+    ],
+    medications: [],
+    labs: [],
+    priorTreatments: [],
+    ...overrides,
+  };
+}
+
+const baseMechanism: Mechanism = {
+  conditionId: "44054006",
+  conditionName: "Type 2 diabetes mellitus",
+  mondoId: "MONDO:0005148",
+  geneTargets: [{ id: "SLC5A2", name: "SLC5A2", type: "gene_protein" }],
+  pathways: [
+    { id: "GO:0035623", name: "glucose reabsorption", type: "biological_process" },
+  ],
+  supportingPaths: [],
+  rationale: "primary metabolic driver",
+};
+
+describe("searchStrategyPrompt", () => {
+  it("renders demographics, conditions, and mechanisms", () => {
+    const out = searchStrategyPrompt(makeProfile(), [baseMechanism], null);
+    expect(out).toContain("age: 60, sex: female");
+    expect(out).toContain("Type 2 diabetes mellitus");
+    expect(out).toContain("SLC5A2");
+    expect(out).toContain("glucose reabsorption");
+    expect(out).toContain("context: primary metabolic driver");
+  });
+
+  it("flags treatment-naive when no active medications and no prior treatments", () => {
+    const out = searchStrategyPrompt(makeProfile(), [baseMechanism], null);
+    expect(out).toContain("Active medications:\n(none — treatment-naive)");
+    expect(out).toContain("Prior treatments:\n(none recorded)");
+  });
+
+  it("renders only active/in-progress medications, skipping stopped ones", () => {
+    const out = searchStrategyPrompt(
+      makeProfile({
+        medications: [
+          {
+            code: "1",
+            system: "rxn",
+            display: "metformin",
+            events: [{ date: "2024-01-01", status: "active" }],
+          },
+          {
+            code: "2",
+            system: "rxn",
+            display: "glipizide",
+            events: [{ date: "2023-01-01", status: "stopped" }],
+          },
+          {
+            code: "3",
+            system: "rxn",
+            display: "dapagliflozin",
+            events: [{ date: "2024-06-01", status: "in-progress" }],
+          },
+        ],
+      }),
+      [baseMechanism],
+      null,
+    );
+    expect(out).toContain("- metformin");
+    expect(out).toContain("- dapagliflozin");
+    expect(out).not.toContain("- glipizide");
+  });
+
+  it("renders prior treatments with date when available", () => {
+    const out = searchStrategyPrompt(
+      makeProfile({
+        priorTreatments: [
+          { code: "x", system: "rxn", display: "doxorubicin", date: "2023-04-15" },
+          { code: "y", system: "rxn", display: "cyclophosphamide" },
+        ],
+      }),
+      [baseMechanism],
+      null,
+    );
+    expect(out).toContain("- doxorubicin (2023-04-15)");
+    expect(out).toContain("- cyclophosphamide");
+  });
+
+  it("includes broadening instructions only when previousAttempt is provided", () => {
+    const without = searchStrategyPrompt(makeProfile(), [baseMechanism], null);
+    expect(without).not.toContain("A previous attempt yielded too few candidates");
+    expect(without).toContain("broadeningApplied should be an empty list on the first attempt");
+
+    const withPrev = searchStrategyPrompt(makeProfile(), [baseMechanism], {
+      queries: ["type 2 diabetes SGLT2 phase 2"],
+      filters: { phase: ["PHASE2"], status: ["RECRUITING"] },
+      attempt: 1,
+      broadeningApplied: [],
+    });
+    expect(withPrev).toContain("A previous attempt yielded too few candidates");
+    expect(withPrev).toContain("Previous attempt (attempt 1)");
+    expect(withPrev).toContain("type 2 diabetes SGLT2 phase 2");
+  });
+
+  it("instructs the model not to put drug names in queries", () => {
+    const out = searchStrategyPrompt(makeProfile(), [baseMechanism], null);
+    expect(out).toContain("Do NOT put drug names");
+  });
+
+  it("instructs the model to use age/sex for filters only", () => {
+    const out = searchStrategyPrompt(makeProfile(), [baseMechanism], null);
+    expect(out).toContain("Use age and sex to inform FILTERS, not queries");
+  });
+});
+```
+
+- [ ] **Step 3: Run prompt tests to confirm they pass**
+
+Run: `pnpm --filter agent test src/prompts/search-strategy.test.ts`
+Expected: PASS, 7 tests. (The prompt was written in Step 1; this step verifies the rendering contract.)
+
+- [ ] **Step 4: Write the failing test**
 
 `apps/agent/src/nodes/generate-search-strategy.test.ts`:
 
@@ -956,17 +1157,22 @@ function makeState(
 ): AgentStateType {
   return {
     patientProfile: {
-      patientId: "p1",
+      id: "p1",
+      displayName: "Test Patient",
+      ageYears: 60,
+      sex: "female",
+      deceased: false,
       conditions: [
         {
           code: "44054006",
+          system: "http://snomed.info/sct",
           display: "Type 2 diabetes mellitus",
           clinicalStatus: "active",
         },
       ],
       medications: [],
-      observations: [],
-      demographics: { ageYears: 60, sex: "female" },
+      labs: [],
+      priorTreatments: [],
     },
     mechanisms: [
       {
@@ -1054,12 +1260,12 @@ describe("generateSearchStrategy", () => {
 });
 ```
 
-- [ ] **Step 3: Run the test to confirm it fails**
+- [ ] **Step 5: Run the test to confirm it fails**
 
 Run: `pnpm --filter agent test src/nodes/generate-search-strategy.test.ts`
 Expected: FAIL — current stub returns `{searchStrategy: null, attempts: state.attempts + 1}`, doesn't call the LLM.
 
-- [ ] **Step 4: Write the implementation**
+- [ ] **Step 6: Write the implementation**
 
 `apps/agent/src/nodes/generate-search-strategy.ts`:
 
@@ -1129,20 +1335,20 @@ export async function generateSearchStrategy(
 }
 ```
 
-- [ ] **Step 5: Run the test**
+- [ ] **Step 7: Run the test**
 
 Run: `pnpm --filter agent test src/nodes/generate-search-strategy.test.ts`
 Expected: PASS, 4 tests.
 
-- [ ] **Step 6: Run all agent tests**
+- [ ] **Step 8: Run all agent tests**
 
 Run: `pnpm --filter agent test`
-Expected: ALL PASS.
+Expected: ALL PASS (the prompt-rendering tests from Step 3 should still pass too).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
-git add apps/agent/src/prompts/search-strategy.ts apps/agent/src/nodes/generate-search-strategy.ts apps/agent/src/nodes/generate-search-strategy.test.ts
+git add apps/agent/src/prompts/search-strategy.ts apps/agent/src/prompts/search-strategy.test.ts apps/agent/src/nodes/generate-search-strategy.ts apps/agent/src/nodes/generate-search-strategy.test.ts
 git commit -m "Implement generate-search-strategy with structured-output LLM call"
 ```
 
