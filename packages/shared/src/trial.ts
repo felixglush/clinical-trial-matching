@@ -1,7 +1,7 @@
 import { z } from "zod";
-import { EligibilityAssessmentSchema } from "./eligibility.js";
-import { CitationSchema } from "./pubmed.js";
-import { RepurposingRationaleSchema } from "./repurposing.js";
+import { EligibilityAssessmentSchema } from "./eligibility";
+import { CitationSchema } from "./pubmed";
+import { RepurposingRationaleSchema } from "./repurposing";
 
 export const TrialLocationSchema = z.object({
   facility: z.string().optional(),

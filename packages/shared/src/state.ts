@@ -1,10 +1,10 @@
 import { z } from "zod";
-import { PatientProfileSchema } from "./patient.js";
-import { MechanismSchema } from "./mechanism.js";
-import { RepurposingCandidateSchema } from "./repurposing.js";
-import { SearchStrategySchema } from "./search.js";
-import { TrialCandidateSchema, TrialMatchSchema } from "./trial.js";
-import { ApprovalRequestSchema } from "./run.js";
+import { PatientProfileSchema } from "./patient";
+import { MechanismSchema } from "./mechanism";
+import { RepurposingCandidateSchema } from "./repurposing";
+import { SearchStrategySchema } from "./search";
+import { TrialCandidateSchema, TrialMatchSchema } from "./trial";
+import { ApprovalRequestSchema } from "./run";
 
 export const GraphStateSchema = z.object({
   patientId: z.string(),

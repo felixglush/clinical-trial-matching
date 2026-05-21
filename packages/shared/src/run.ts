@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { TrialMatchSchema } from "./trial.js";
+import { TrialMatchSchema } from "./trial";
 
 export const RunStatusSchema = z.enum([
   "pending",
