@@ -111,16 +111,6 @@ describe("MechanismPicksSchema", () => {
     expect(parsed.picks).toHaveLength(1);
   });
 
-  it("rejects more than 5 picks", () => {
-    const tooMany = {
-      picks: Array.from({ length: 6 }, (_, i) => ({
-        conditionId: String(i),
-        rationale: "x",
-      })),
-    };
-    expect(() => MechanismPicksSchema.parse(tooMany)).toThrow();
-  });
-
   it("rejects picks missing rationale", () => {
     const bad = { picks: [{ conditionId: "254837009" }] };
     expect(() => MechanismPicksSchema.parse(bad)).toThrow();

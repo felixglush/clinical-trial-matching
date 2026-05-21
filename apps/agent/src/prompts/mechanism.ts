@@ -12,17 +12,21 @@ const MAX_PICKS = 5;
 // Structured output schema for the LLM. The LLM returns an ordered list of
 // conditionIds it considers most clinically relevant, each with a
 // one-sentence rationale.
+//
+// We do not use `.max(MAX_PICKS)` here because it would emit `maxItems` into
+// the JSON Schema; some OpenRouter providers (notably Amazon Bedrock for
+// Anthropic models) reject that property and return a 400. The prompt asks
+// the model for "up to 5" and the node slices to MAX_PICKS after parsing.
 export const MechanismPicksSchema = z.object({
-  picks: z
-    .array(
-      z.object({
-        conditionId: z.string(),
-        rationale: z.string(),
-      }),
-    )
-    .max(MAX_PICKS),
+  picks: z.array(
+    z.object({
+      conditionId: z.string(),
+      rationale: z.string(),
+    }),
+  ),
 });
 export type MechanismPicks = z.infer<typeof MechanismPicksSchema>;
+export const MECHANISM_PICKS_CAP = MAX_PICKS;
 
 export function mechanismPrompt(
   profile: PatientProfile,
@@ -58,6 +62,8 @@ export function mechanismPrompt(
     "",
     "Each pick must:",
     `  - use a conditionId from this set: ${idList}`,
+    "  - use each conditionId at most once (one mechanism summary per",
+    "    condition; do not repeat the same conditionId across picks)",
     "  - include a single-sentence rationale that references the patient's",
     "    profile (age, primary diagnosis, comorbidities) and the specific",
     "    pathway or gene driving the choice.",
