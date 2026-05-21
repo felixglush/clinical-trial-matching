@@ -4,6 +4,8 @@ A patient-to-trial matching workflow that augments standard eligibility matching
 
 Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys as a Next.js app (Vercel) + LangGraph agent backed by a Neo4j knowledge graph.
 
+> **New to the domain?** [docs/biomedical-primer.md](docs/biomedical-primer.md) is a short primer on the biology (diseases, genes, pathways, drugs, "mechanism") and how PrimeKG and TxGNN fit together. Worth reading before the workflow below if terms like *pathway* or *gene–disease association* aren't already in your working vocabulary.
+
 ## Workflow
 
 ```

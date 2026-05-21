@@ -4,6 +4,7 @@ dist/
 build/
 test-results/
 playwright-report/
+.playwright-cli/
 .turbo/
 .langgraph_api/
 .synthea/
