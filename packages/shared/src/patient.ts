@@ -2,25 +2,52 @@ import { z } from "zod";
 
 export const ConditionSchema = z.object({
   code: z.string(),
+  system: z.string(),
   display: z.string(),
   onsetDate: z.string().optional(),
-  clinicalStatus: z.enum(["active", "resolved", "remission", "inactive"]).optional(),
+  abatementDate: z.string().optional(),
+  clinicalStatus: z
+    .enum(["active", "recurrence", "relapse", "inactive", "remission", "resolved"])
+    .optional(),
 });
 export type Condition = z.infer<typeof ConditionSchema>;
 
+export const MedicationEventSchema = z.object({
+  date: z.string(),
+  status: z
+    .enum(["active", "in-progress", "on-hold", "stopped", "completed"])
+    .optional(),
+});
+export type MedicationEvent = z.infer<typeof MedicationEventSchema>;
+
 export const MedicationSchema = z.object({
   code: z.string(),
+  system: z.string(),
   display: z.string(),
-  status: z.enum(["active", "stopped", "completed"]).optional(),
+  events: z.array(MedicationEventSchema).nonempty(),
 });
 export type Medication = z.infer<typeof MedicationSchema>;
 
-export const LabSchema = z.object({
+export const PriorTreatmentSchema = z.object({
   code: z.string(),
+  system: z.string(),
   display: z.string(),
+  date: z.string().optional(),
+});
+export type PriorTreatment = z.infer<typeof PriorTreatmentSchema>;
+
+export const LabValueSchema = z.object({
+  date: z.string(),
   value: z.union([z.number(), z.string()]),
   unit: z.string().optional(),
-  date: z.string().optional(),
+});
+export type LabValue = z.infer<typeof LabValueSchema>;
+
+export const LabSchema = z.object({
+  code: z.string(),
+  system: z.string(),
+  display: z.string(),
+  values: z.array(LabValueSchema).nonempty(),
 });
 export type Lab = z.infer<typeof LabSchema>;
 
@@ -29,9 +56,11 @@ export const PatientProfileSchema = z.object({
   displayName: z.string(),
   ageYears: z.number().int().nonnegative(),
   sex: z.enum(["male", "female", "other", "unknown"]),
+  deceased: z.boolean(),
+  deceasedDate: z.string().optional(),
   conditions: z.array(ConditionSchema),
   medications: z.array(MedicationSchema),
   labs: z.array(LabSchema),
-  priorTreatments: z.array(z.string()),
+  priorTreatments: z.array(PriorTreatmentSchema),
 });
 export type PatientProfile = z.infer<typeof PatientProfileSchema>;

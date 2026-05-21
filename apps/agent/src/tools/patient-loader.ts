@@ -2,10 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import {
-  PATIENT_FIXTURES,
-  type PatientProfile,
-} from "@clinical-trial-matching/shared";
+import { PATIENT_FIXTURES } from "@clinical-trial-matching/shared";
 
 // apps/agent/src/tools/<this> → up 4 = repo root.
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
@@ -32,8 +29,4 @@ export async function loadPatientBundle(patientId: string): Promise<unknown> {
 
   const json = await readFile(join(BUNDLES_DIR, filename), "utf-8");
   return JSON.parse(json);
-}
-
-export async function loadPatientProfile(_patientId: string): Promise<PatientProfile> {
-  throw new Error("loadPatientProfile not implemented");
 }
