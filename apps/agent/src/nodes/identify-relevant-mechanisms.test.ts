@@ -51,6 +51,7 @@ function stateWith(overrides: Partial<AgentStateType>): AgentStateType {
     patientId: "p",
     patientProfile: PROFILE,
     mechanisms: [],
+    mechanismDrops: [],
     repurposingCandidates: [],
     searchStrategy: null,
     candidates: [],
@@ -197,6 +198,79 @@ describe("identifyRelevantMechanisms", () => {
     const out = await identifyRelevantMechanisms(stateWith({}));
     expect(out.mechanisms).toHaveLength(1);
     expect(out.mechanisms![0]!.conditionId).toBe("254837009");
+  });
+
+  it("records inactive conditions as drops with reason='inactive'", async () => {
+    // PROFILE has one active (254837009) and one resolved (111111).
+    vi.spyOn(kg, "buildCandidateMechanisms").mockResolvedValue({
+      candidates: [
+        {
+          conditionId: "254837009",
+          conditionName: "Malignant tumor of breast",
+          geneTargets: [],
+          pathways: [],
+          supportingPaths: [],
+        },
+      ],
+      unresolved: [],
+    });
+    structuredInvoke.mockResolvedValue({
+      picks: [{ conditionId: "254837009", rationale: "ok" }],
+    });
+    const out = await identifyRelevantMechanisms(stateWith({}));
+    const drops = out.mechanismDrops ?? [];
+    expect(drops).toContainEqual({
+      code: "111111",
+      display: "Resolved thing",
+      reason: "inactive",
+      detail: "clinicalStatus=resolved",
+    });
+  });
+
+  it("records crosswalk-unresolved active conditions as drops with reason='unresolved'", async () => {
+    vi.spyOn(kg, "buildCandidateMechanisms").mockResolvedValue({
+      candidates: [],
+      unresolved: ["254837009"],
+    });
+    const out = await identifyRelevantMechanisms(stateWith({}));
+    expect(out.mechanismDrops).toContainEqual({
+      code: "254837009",
+      display: "Malignant tumor of breast",
+      reason: "unresolved",
+      detail: "no MONDO entry in SNOMED→PrimeKG crosswalk",
+    });
+  });
+
+  it("records candidates not picked by the LLM as drops with reason='not-picked'", async () => {
+    vi.spyOn(kg, "buildCandidateMechanisms").mockResolvedValue({
+      candidates: [
+        {
+          conditionId: "254837009",
+          conditionName: "Breast cancer",
+          geneTargets: [],
+          pathways: [],
+          supportingPaths: [],
+        },
+        {
+          conditionId: "59621000",
+          conditionName: "Hypertension",
+          geneTargets: [],
+          pathways: [],
+          supportingPaths: [],
+        },
+      ],
+      unresolved: [],
+    });
+    structuredInvoke.mockResolvedValue({
+      picks: [{ conditionId: "254837009", rationale: "primary" }],
+    });
+    const out = await identifyRelevantMechanisms(stateWith({}));
+    const notPicked = (out.mechanismDrops ?? []).filter(
+      (d) => d.reason === "not-picked",
+    );
+    expect(notPicked).toHaveLength(1);
+    expect(notPicked[0]!.code).toBe("59621000");
+    expect(notPicked[0]!.display).toBe("Hypertension");
   });
 
   it("returns an error when LLM call throws", async () => {

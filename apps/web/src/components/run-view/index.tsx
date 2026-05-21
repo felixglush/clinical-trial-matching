@@ -1,6 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import type { Mechanism, RepurposingCandidate, TrialCandidate, TrialMatch } from "@/lib/types";
+import type {
+  Mechanism,
+  MechanismDrop,
+  RepurposingCandidate,
+  TrialCandidate,
+  TrialMatch,
+} from "@/lib/types";
 
 import { GraphTimeline } from "./graph-timeline";
 import { ReasoningTrace } from "./reasoning-trace";
@@ -9,6 +15,7 @@ import { CandidatesPanel } from "./candidates-panel";
 
 type RunState = {
   mechanisms: Mechanism[];
+  mechanismDrops: MechanismDrop[];
   repurposingCandidates: RepurposingCandidate[];
   candidates: TrialCandidate[];
   matches: TrialMatch[];
@@ -19,6 +26,7 @@ type RunState = {
 export function RunView({ threadId }: { threadId: string }) {
   const [state, setState] = useState<RunState>({
     mechanisms: [],
+    mechanismDrops: [],
     repurposingCandidates: [],
     candidates: [],
     matches: [],
@@ -45,6 +53,7 @@ export function RunView({ threadId }: { threadId: string }) {
           setState((prev) => ({
             ...prev,
             mechanisms: d.mechanisms ?? prev.mechanisms,
+            mechanismDrops: d.mechanismDrops ?? prev.mechanismDrops,
             repurposingCandidates: d.repurposingCandidates ?? prev.repurposingCandidates,
             candidates: d.candidates ?? prev.candidates,
             matches: d.matches ?? prev.matches,
@@ -87,6 +96,7 @@ export function RunView({ threadId }: { threadId: string }) {
         )}
         <MechanismsPanel
           mechanisms={state.mechanisms}
+          mechanismDrops={state.mechanismDrops}
           repurposingCandidates={state.repurposingCandidates}
         />
         <ReasoningTrace messages={[]} />

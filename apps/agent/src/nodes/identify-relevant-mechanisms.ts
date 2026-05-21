@@ -170,13 +170,13 @@
 import type {
   Condition,
   Mechanism,
+  MechanismDrop,
   PatientProfile,
 } from "@clinical-trial-matching/shared";
 
 import {
   buildCandidateMechanisms,
   type CandidateMechanism,
-  type ConditionInput,
 } from "../tools/kg.js";
 import {
   MECHANISM_PICKS_CAP,
@@ -200,19 +200,22 @@ export async function identifyRelevantMechanisms(
     return { error: "No patient profile available" };
   }
 
-  const conditions = activeConditionsAsInputs(profile);
-  if (conditions.length === 0) {
-    return { mechanisms: [] };
+  const { active, inactiveDrops } = partitionActiveConditions(profile);
+  if (active.length === 0) {
+    return { mechanisms: [], mechanismDrops: inactiveDrops };
   }
 
   let candidates: CandidateMechanism[];
   let unresolved: string[];
   try {
-    ({ candidates, unresolved } = await buildCandidateMechanisms(conditions));
+    ({ candidates, unresolved } = await buildCandidateMechanisms(
+      active.map((c) => ({ snomedCode: c.code, conditionDisplay: c.display })),
+    ));
   } catch (err) {
     return { error: `Failed to query KG: ${errorMessage(err)}` };
   }
 
+  const unresolvedDrops = makeUnresolvedDrops(active, unresolved);
   if (unresolved.length > 0) {
     console.warn(
       `identify-relevant-mechanisms: ${unresolved.length} SNOMED code(s) unresolved against PrimeKG crosswalk: ${unresolved.join(", ")}`,
@@ -220,7 +223,10 @@ export async function identifyRelevantMechanisms(
   }
 
   if (candidates.length === 0) {
-    return { mechanisms: [] };
+    return {
+      mechanisms: [],
+      mechanismDrops: [...inactiveDrops, ...unresolvedDrops],
+    };
   }
 
   let picks;
@@ -234,13 +240,63 @@ export async function identifyRelevantMechanisms(
 
   const cappedPicks = picks.slice(0, MECHANISM_PICKS_CAP);
   const mechanisms = orderedMechanismsFromPicks(cappedPicks, candidates);
-  return { mechanisms };
+  const notPickedDrops = makeNotPickedDrops(candidates, mechanisms);
+
+  return {
+    mechanisms,
+    mechanismDrops: [...inactiveDrops, ...unresolvedDrops, ...notPickedDrops],
+  };
 }
 
-function activeConditionsAsInputs(profile: PatientProfile): ConditionInput[] {
-  return profile.conditions
-    .filter((c) => !c.clinicalStatus || ACTIVE_STATUSES.has(c.clinicalStatus))
-    .map((c) => ({ snomedCode: c.code, conditionDisplay: c.display }));
+function partitionActiveConditions(profile: PatientProfile): {
+  active: PatientProfile["conditions"];
+  inactiveDrops: MechanismDrop[];
+} {
+  const active: PatientProfile["conditions"] = [];
+  const inactiveDrops: MechanismDrop[] = [];
+  for (const c of profile.conditions) {
+    if (!c.clinicalStatus || ACTIVE_STATUSES.has(c.clinicalStatus)) {
+      active.push(c);
+    } else {
+      inactiveDrops.push({
+        code: c.code,
+        display: c.display,
+        reason: "inactive",
+        detail: `clinicalStatus=${c.clinicalStatus}`,
+      });
+    }
+  }
+  return { active, inactiveDrops };
+}
+
+function makeUnresolvedDrops(
+  active: PatientProfile["conditions"],
+  unresolvedCodes: string[],
+): MechanismDrop[] {
+  const unresolvedSet = new Set(unresolvedCodes);
+  return active
+    .filter((c) => unresolvedSet.has(c.code))
+    .map((c) => ({
+      code: c.code,
+      display: c.display,
+      reason: "unresolved" as const,
+      detail: "no MONDO entry in SNOMED→PrimeKG crosswalk",
+    }));
+}
+
+function makeNotPickedDrops(
+  candidates: CandidateMechanism[],
+  mechanisms: Mechanism[],
+): MechanismDrop[] {
+  const picked = new Set(mechanisms.map((m) => m.conditionId));
+  return candidates
+    .filter((c) => !picked.has(c.conditionId))
+    .map((c) => ({
+      code: c.conditionId,
+      display: c.conditionName,
+      reason: "not-picked" as const,
+      detail: `LLM ranked below top ${MECHANISM_PICKS_CAP}`,
+    }));
 }
 
 function orderedMechanismsFromPicks(

@@ -2,6 +2,7 @@ import { Annotation } from "@langchain/langgraph";
 import type {
   PatientProfile,
   Mechanism,
+  MechanismDrop,
   RepurposingCandidate,
   SearchStrategy,
   TrialCandidate,
@@ -16,6 +17,13 @@ export const AgentState = Annotation.Root({
     default: () => null,
   }),
   mechanisms: Annotation<Mechanism[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  // Conditions on the patient profile that did not make it into `mechanisms`,
+  // with a reason. Populated by identify-relevant-mechanisms so the UI can
+  // surface "considered N, kept K, dropped these" for auditability.
+  mechanismDrops: Annotation<MechanismDrop[]>({
     reducer: (_prev, next) => next,
     default: () => [],
   }),
