@@ -96,7 +96,7 @@ Four external datasets feed the workflow. Two are offline (generated/loaded once
 [PrimeKG](https://zitniklab.hms.harvard.edu/projects/PrimeKG/) is the Zitnik Lab's precision-medicine KG, integrating 20 biomedical sources (DrugBank, DisGeNET, Reactome, MONDO, …) into ~129K nodes and ~4M edges across diseases, drugs, genes/proteins, pathways, side effects, exposures, phenotypes, anatomy.
 
 - **Role:** Mechanism reasoning (`identify-relevant-mechanisms`, `mechanism-plausibility`) and drug repurposing (`find-repurposing-candidates`). KG paths from a patient's conditions → genes/pathways → drugs surface repurposing candidates and let us score how plausible a trial intervention is for the patient's biology.
-- **Integration:** `pnpm kg:build-subset` downloads PrimeKG CSVs from Harvard Dataverse (~600MB) and filters to a 4-type subset (drug + disease + gene/protein + biological_process — dropping side effects, exposures, anatomy, phenotypes, which aren't load-bearing for mechanism/repurposing). `pnpm kg:load` imports into a local Neo4j instance via `LOAD CSV`. A single shared `neo4j-driver` is opened at agent startup; typed Cypher helpers live in `apps/agent/src/tools/kg.ts`.
+- **Integration:** `pnpm kg:build-subset` downloads PrimeKG CSVs from Harvard Dataverse (~600MB) and filters to a 4-type subset (drug + disease + gene/protein + biological_process — dropping side effects, exposures, anatomy, phenotypes, which aren't load-bearing for mechanism/repurposing). `pnpm kg:load` imports into a local Neo4j instance via `LOAD CSV`. `pnpm kg:build-crosswalk` then joins MONDO's SSSOM cross-references against the PrimeKG disease nodes to produce a committed SNOMED→PrimeKG lookup the agent uses at runtime. A single shared `neo4j-driver` is opened at agent startup; typed Cypher helpers live in `apps/agent/src/tools/kg.ts`. See [docs/primekg-querying.md](docs/primekg-querying.md) for query gotchas and [docs/kg-crosswalk.md](docs/kg-crosswalk.md) for crosswalk regeneration.
 - **Resolution caveat:** PrimeKG captures *associations*, not biomarker-level predictions. It will tell you "EGFR is implicated in NSCLC" and "osimertinib targets EGFR" — it won't tell you "EGFR T790M mutation predicts osimertinib response." For mutation-precise matching we'd layer in OncoKB / CIViC / COSMIC later.
 - **Requires:** Neo4j Desktop (or `docker run neo4j`). Free, no auth (Creative Commons license).
 
@@ -151,6 +151,12 @@ One-time data load (when ready):
 pnpm patients:generate         # Synthea FHIR bundles (requires Java 11+)
 pnpm kg:build-subset           # PrimeKG → data/kg/
 pnpm kg:load                   # PrimeKG → local Neo4j
+pnpm kg:build-crosswalk        # SNOMED → PrimeKG disease crosswalk (MONDO SSSOM)
+```
+
+End-to-end test (4-patient mechanism rendering, requires the dev servers + Neo4j up):
+```bash
+pnpm --filter web test:e2e
 ```
 
 ## Project rules

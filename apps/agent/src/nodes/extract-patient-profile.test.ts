@@ -715,6 +715,7 @@ function emptyState() {
     patientId: "",
     patientProfile: null,
     mechanisms: [],
+    mechanismDrops: [],
     repurposingCandidates: [],
     searchStrategy: null,
     candidates: [],
