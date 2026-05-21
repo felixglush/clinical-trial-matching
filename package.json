@@ -15,11 +15,14 @@
     "lint": "pnpm -r run lint",
     "patients:generate": "./scripts/generate-patients.sh",
     "kg:build-subset": "tsx scripts/build-primekg-subset.ts",
-    "kg:load": "./scripts/load-primekg-to-neo4j.sh"
+    "kg:load": "./scripts/load-primekg-to-neo4j.sh",
+    "kg:build-crosswalk": "tsx scripts/build-mondo-crosswalk.ts",
+    "test:scripts": "vitest run scripts/"
   },
   "devDependencies": {
     "prettier": "3.8.3",
     "tsx": "4.22.3",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "4.1.7"
   }
 }
