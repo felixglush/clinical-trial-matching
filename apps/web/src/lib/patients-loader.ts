@@ -1,7 +1,7 @@
 import "server-only";
 import {
   PATIENT_FIXTURES,
-  type PatientProfile,
+  type PatientFixture,
 } from "@clinical-trial-matching/shared";
 
 export async function listPatients(): Promise<Array<{ id: string; displayName: string }>> {
@@ -11,7 +11,10 @@ export async function listPatients(): Promise<Array<{ id: string; displayName: s
   }));
 }
 
-export async function getPatient(_patientId: string): Promise<PatientProfile | null> {
-  // TODO: load FHIR bundle from data/synthea-output/ and parse with PatientProfileSchema.
-  return null;
+// Returns the fixture metadata for the patient detail page. The full
+// PatientProfile (with FHIR-derived conditions/labs/meds) only exists inside
+// the agent's state — the web detail page just needs slug, displayName, and
+// archetype to render the header and trigger a run.
+export async function getPatient(patientId: string): Promise<PatientFixture | null> {
+  return PATIENT_FIXTURES.find((p) => p.slug === patientId) ?? null;
 }

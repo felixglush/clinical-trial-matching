@@ -7,29 +7,31 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@clinical-trial-matching/shared": "workspace:*",
     "@langchain/langgraph-sdk": "1.9.4",
-    "next": "16.2.6",
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "lucide-react": "1.16.0",
+    "next": "16.2.6",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
     "tailwind-merge": "3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.55.1",
     "@tailwindcss/postcss": "4.3.0",
     "@types/node": "20.19.41",
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
     "autoprefixer": "10.5.0",
+    "eslint": "10.4.0",
+    "eslint-config-next": "16.2.6",
     "postcss": "8.5.15",
     "tailwindcss": "4.3.0",
-    "typescript": "6.0.3",
-    "eslint": "10.4.0",
-    "eslint-config-next": "16.2.6"
+    "typescript": "6.0.3"
   }
 }

@@ -151,6 +151,12 @@ One-time data load (when ready):
 pnpm patients:generate         # Synthea FHIR bundles (requires Java 11+)
 pnpm kg:build-subset           # PrimeKG → data/kg/
 pnpm kg:load                   # PrimeKG → local Neo4j
+pnpm kg:build-crosswalk        # SNOMED → PrimeKG disease crosswalk (MONDO SSSOM)
+```
+
+End-to-end test (4-patient mechanism rendering, requires the dev servers + Neo4j up):
+```bash
+pnpm --filter web test:e2e
 ```
 
 ## Project rules

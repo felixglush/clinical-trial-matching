@@ -1,4 +1,4 @@
-import { Button } from "@/components/ui/button";
+import { RunNewMatchButton } from "@/components/run-new-match-button";
 import { MatchHistoryList } from "@/components/match-history-list";
 
 export default async function PatientPage({
@@ -10,7 +10,7 @@ export default async function PatientPage({
   return (
     <div className="space-y-6">
       <div>
-        <Button>Run new match</Button>
+        <RunNewMatchButton patientId={patientId} />
       </div>
       <MatchHistoryList patientId={patientId} />
     </div>
