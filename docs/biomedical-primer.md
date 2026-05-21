@@ -1,6 +1,6 @@
 # Biomedical primer for engineers
 
-Onboarding for the biology and the knowledge graph this project is built on, written assuming **no biomedical background**. If you can read TypeScript, you can read this. Once you finish, the implementation docs ([primekg-querying.md](primekg-querying.md), [kg-crosswalk.md](kg-crosswalk.md), [topology.md](topology.md)) will make sense.
+Onboarding for the biology and the knowledge graph this project is built on.
 
 ## The TL;DR
 
