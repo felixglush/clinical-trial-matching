@@ -122,6 +122,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "254837009",
           conditionName: "Breast cancer",
+          mondoId: "MONDO:0007254",
           geneTargets: [{ id: "1", name: "BRCA1", type: "gene_protein" }],
           pathways: [{ id: "P1", name: "DNA repair", type: "biological_process" }],
           supportingPaths: [],
@@ -129,6 +130,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "59621000",
           conditionName: "Hypertension",
+          mondoId: "MONDO:0001134",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],
@@ -158,6 +160,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "254837009",
           conditionName: "Breast cancer",
+          mondoId: "MONDO:0007254",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],
@@ -182,6 +185,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "254837009",
           conditionName: "Breast cancer",
+          mondoId: "MONDO:0007254",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],
@@ -207,6 +211,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "254837009",
           conditionName: "Malignant tumor of breast",
+          mondoId: "MONDO:0007254",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],
@@ -247,6 +252,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "254837009",
           conditionName: "Breast cancer",
+          mondoId: "MONDO:0007254",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],
@@ -254,6 +260,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "59621000",
           conditionName: "Hypertension",
+          mondoId: "MONDO:0001134",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],
@@ -279,6 +286,7 @@ describe("identifyRelevantMechanisms", () => {
         {
           conditionId: "254837009",
           conditionName: "Breast cancer",
+          mondoId: "MONDO:0007254",
           geneTargets: [],
           pathways: [],
           supportingPaths: [],

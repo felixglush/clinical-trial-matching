@@ -21,8 +21,9 @@ export const KGPathSchema = z.object({
 export type KGPath = z.infer<typeof KGPathSchema>;
 
 export const MechanismSchema = z.object({
-  conditionId: z.string(),
+  conditionId: z.string(),         // SNOMED code (matches PatientProfile.conditions[].code)
   conditionName: z.string(),
+  mondoId: z.string(),             // resolved MONDO id, e.g. "MONDO:0005148"; used by TxGNN lookups downstream
   geneTargets: z.array(KGNodeSchema),
   pathways: z.array(KGNodeSchema),
   supportingPaths: z.array(KGPathSchema),

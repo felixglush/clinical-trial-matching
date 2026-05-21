@@ -6,6 +6,11 @@ export const RepurposingCandidateSchema = z.object({
   originalIndications: z.array(z.string()),
   rationale: z.string(),
   supportingPaths: z.array(KGPathSchema),
+  // Populated when the candidate came from a TxGNN lookup. Optional because
+  // a future non-TxGNN producer (manual entry, alternate model) wouldn't have
+  // these. Range: [0, 1].
+  predIndication: z.number().min(0).max(1).optional(),
+  predContraindication: z.number().min(0).max(1).optional(),
 });
 export type RepurposingCandidate = z.infer<typeof RepurposingCandidateSchema>;
 
