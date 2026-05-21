@@ -9,6 +9,8 @@ data/kg/
 data/synthea-output/
 .agents/
 skills-lock.json
+.claude/settings.local.json
+apps/web/next-env.d.ts
 .env
 .env.local
 .env.*.local
