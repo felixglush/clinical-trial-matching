@@ -1,0 +1,11 @@
+{
+  "MONDO:0005148": [
+    { "drugId": "DB00331", "drugName": "metformin",     "predIndication": 0.94, "predContraindication": 0.08 },
+    { "drugId": "DB01067", "drugName": "glipizide",     "predIndication": 0.89, "predContraindication": 0.11 },
+    { "drugId": "DB06292", "drugName": "dapagliflozin", "predIndication": 0.86, "predContraindication": 0.09 }
+  ],
+  "MONDO:0007254": [
+    { "drugId": "DB01006", "drugName": "letrozole",     "predIndication": 0.92, "predContraindication": 0.12 },
+    { "drugId": "DB00675", "drugName": "tamoxifen",     "predIndication": 0.91, "predContraindication": 0.10 }
+  ]
+}

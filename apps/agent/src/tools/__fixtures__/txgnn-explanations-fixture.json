@@ -1,0 +1,15 @@
+{
+  "MONDO:0005148::DB06292": {
+    "nodes": [
+      { "id": "DB06292", "name": "dapagliflozin", "type": "drug" },
+      { "id": "SLC5A2",  "name": "SLC5A2",        "type": "gene_protein" },
+      { "id": "GO:0035623", "name": "glucose reabsorption", "type": "biological_process" },
+      { "id": "MONDO:0005148", "name": "type 2 diabetes mellitus", "type": "disease" }
+    ],
+    "edges": [
+      { "source": "DB06292", "target": "SLC5A2", "relation": "target" },
+      { "source": "SLC5A2", "target": "GO:0035623", "relation": "interacts with" },
+      { "source": "GO:0035623", "target": "MONDO:0005148", "relation": "associated with" }
+    ]
+  }
+}
