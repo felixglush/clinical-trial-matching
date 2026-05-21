@@ -152,6 +152,7 @@ import {
 
 import { loadPatientBundle } from "../tools/patient-loader.js";
 import type { AgentStateType } from "../state.js";
+import { errorMessage } from "../util/error.js";
 
 export async function extractPatientProfile(
   state: AgentStateType,
@@ -167,8 +168,7 @@ export async function extractPatientProfile(
     const patientProfile = buildPatientProfile(bundle, fixture, new Date());
     return { patientProfile };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { error: `Failed to build profile for ${state.patientId}: ${message}` };
+    return { error: `Failed to build profile for ${state.patientId}: ${errorMessage(err)}` };
   }
 }
 

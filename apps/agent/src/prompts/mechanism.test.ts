@@ -92,8 +92,10 @@ describe("mechanismPrompt", () => {
     expect(out).toContain("254837009, 59621000");
   });
 
-  it("constrains output to at most 5 picks", () => {
-    expect(out).toContain("up to 5");
+  it("constrains output to at most MECHANISM_PICKS_CAP picks", () => {
+    // Locks the cap into the prompt text without hardcoding the number —
+    // bump MAX_PICKS in mechanism.ts and the prompt updates automatically.
+    expect(out).toMatch(/Return up to \d+ picks/);
   });
 
   it("is deterministic for the same input (no timestamps / random)", () => {

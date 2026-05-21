@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import { getPatient } from "@/lib/patients-loader";
+import { getPatient } from "@/lib/patient-loader";
 import { PatientHeader } from "@/components/patient-header";
 
 export default async function PatientLayout({

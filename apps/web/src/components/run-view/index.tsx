@@ -1,25 +1,26 @@
 "use client";
 import { useEffect, useState } from "react";
-import type {
-  Mechanism,
-  MechanismDrop,
-  RepurposingCandidate,
-  TrialCandidate,
-  TrialMatch,
-} from "@/lib/types";
+import type { GraphState } from "@/lib/types";
 
 import { GraphTimeline } from "./graph-timeline";
 import { ReasoningTrace } from "./reasoning-trace";
 import { MechanismsPanel } from "./mechanisms-panel";
 import { CandidatesPanel } from "./candidates-panel";
 
-type RunState = {
-  mechanisms: Mechanism[];
-  mechanismDrops: MechanismDrop[];
-  repurposingCandidates: RepurposingCandidate[];
-  candidates: TrialCandidate[];
-  matches: TrialMatch[];
-  error: string | null;
+// The fields we actually render from the streamed agent state, plus a
+// derived `activeNode` we compute from "updates" chunks. Drawn from
+// `GraphState` (canonical agent shape in @clinical-trial-matching/shared)
+// so adding a state field on the agent automatically widens this type —
+// no silent field drift between agent and web.
+type RunState = Pick<
+  GraphState,
+  | "mechanisms"
+  | "mechanismDrops"
+  | "repurposingCandidates"
+  | "candidates"
+  | "matches"
+  | "error"
+> & {
   activeNode: string | null;
 };
 
@@ -47,8 +48,9 @@ export function RunView({ threadId }: { threadId: string }) {
         if (!chunk?.event) return;
 
         if (chunk.event === "values") {
-          // Full state snapshot. We pull only the fields we render.
-          const d = chunk.data as Partial<RunState> | null;
+          // Full state snapshot. The agent's state is shaped by GraphState;
+          // we pull only the fields we render.
+          const d = chunk.data as Partial<GraphState> | null;
           if (!d) return;
           setState((prev) => ({
             ...prev,

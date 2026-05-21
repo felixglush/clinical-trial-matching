@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { PatientProfile } from "@clinical-trial-matching/shared";
+import {
+  isActiveCondition,
+  type PatientProfile,
+} from "@clinical-trial-matching/shared";
 
 import type { CandidateMechanism } from "../tools/kg.js";
 
@@ -55,10 +58,10 @@ export function mechanismPrompt(
     "",
     candidateBlocks,
     "",
-    "Return up to 5 picks, ordered by clinical priority. Prefer mechanisms",
-    "tied to oncology or repurposing-relevant pathways over mechanisms",
-    "dominated by background comorbidities (e.g., mild hypertension) when",
-    "a primary driver is present.",
+    `Return up to ${MAX_PICKS} picks, ordered by clinical priority. Prefer`,
+    "mechanisms tied to oncology or repurposing-relevant pathways over",
+    "mechanisms dominated by background comorbidities (e.g., mild",
+    "hypertension) when a primary driver is present.",
     "",
     "Each pick must:",
     `  - use a conditionId from this set: ${idList}`,
@@ -78,17 +81,6 @@ function patientSummary(profile: PatientProfile): string {
   ];
   if (profile.deceased) parts.push("deceased");
   return parts.join(", ");
-}
-
-function isActiveCondition(c: PatientProfile["conditions"][number]): boolean {
-  // Mirrors the filter applied in the identify-relevant-mechanisms node so
-  // the prompt and the candidate set stay in sync.
-  if (!c.clinicalStatus) return true;
-  return (
-    c.clinicalStatus === "active" ||
-    c.clinicalStatus === "recurrence" ||
-    c.clinicalStatus === "relapse"
-  );
 }
 
 function formatCandidate(m: CandidateMechanism): string {

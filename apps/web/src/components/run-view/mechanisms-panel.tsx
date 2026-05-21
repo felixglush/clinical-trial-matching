@@ -1,20 +1,15 @@
 "use client";
 import { useState } from "react";
-import type {
-  Mechanism,
-  MechanismDrop,
-  MechanismDropReason,
-  RepurposingCandidate,
+import {
+  MECHANISM_DROP_REASONS,
+  type Mechanism,
+  type MechanismDrop,
+  type MechanismDropReason,
+  type RepurposingCandidate,
 } from "@/lib/types";
 
 const GENE_PREVIEW = 10;
 const PATHWAY_PREVIEW = 8;
-
-const DROP_REASON_LABEL: Record<MechanismDropReason, string> = {
-  inactive: "Inactive condition",
-  unresolved: "No PrimeKG match",
-  "not-picked": "LLM did not rank top-5",
-};
 
 export function MechanismsPanel({
   mechanisms,
@@ -114,7 +109,8 @@ function PreviewList({
 
 function DroppedConditions({ drops }: { drops: MechanismDrop[] }) {
   const [open, setOpen] = useState(false);
-  // Group by reason so the user sees the categorical breakdown.
+  // Group by reason; display order comes from the shared config so adding a
+  // reason in one place updates all UIs.
   const grouped = drops.reduce<Record<MechanismDropReason, MechanismDrop[]>>(
     (acc, d) => {
       (acc[d.reason] ??= []).push(d);
@@ -122,13 +118,6 @@ function DroppedConditions({ drops }: { drops: MechanismDrop[] }) {
     },
     {} as Record<MechanismDropReason, MechanismDrop[]>,
   );
-  // Stable display order — inactive first (most numerous, least interesting),
-  // then unresolved (the audit-relevant ones), then not-picked.
-  const orderedReasons: MechanismDropReason[] = [
-    "inactive",
-    "unresolved",
-    "not-picked",
-  ];
 
   return (
     <div className="mt-4" data-testid="mechanism-drops">
@@ -144,13 +133,13 @@ function DroppedConditions({ drops }: { drops: MechanismDrop[] }) {
       </button>
       {open && (
         <div className="mt-2 space-y-3 rounded border border-neutral-200 bg-neutral-50 p-3">
-          {orderedReasons.map((reason) => {
-            const items = grouped[reason];
+          {MECHANISM_DROP_REASONS.map(({ value, label }) => {
+            const items = grouped[value];
             if (!items?.length) return null;
             return (
-              <div key={reason}>
+              <div key={value}>
                 <div className="text-xs font-medium text-neutral-600 mb-1">
-                  {DROP_REASON_LABEL[reason]} ({items.length})
+                  {label} ({items.length})
                 </div>
                 <ul className="text-xs space-y-1">
                   {items.map((d, i) => (

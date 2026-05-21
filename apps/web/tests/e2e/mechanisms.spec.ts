@@ -1,8 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { PATIENT_FIXTURES } from "@clinical-trial-matching/shared";
 
-// Verifies that each of the 4 archetype patients renders at least one
-// mechanism in the MechanismsPanel after a new run is triggered. The test
-// drives the real agent (LangGraph dev server) + real Neo4j + real LLM —
+// Verifies that every archetype patient renders at least one mechanism
+// in the MechanismsPanel after a new run is triggered. Driven off the
+// shared PATIENT_FIXTURES list so adding a fixture is one place to edit.
+//
+// Drives the real agent (LangGraph dev server) + real Neo4j + real LLM —
 // keep timeouts generous; the LLM call can take 5-15s typically and
 // occasionally far longer (we saw 16 min once via Bedrock backoff).
 //
@@ -11,23 +14,16 @@ import { expect, test } from "@playwright/test";
 //   - Neo4j Desktop running, PrimeKG loaded
 //   - OPENROUTER_API_KEY in apps/agent/.env
 
-const PATIENT_SLUGS = [
-  "hedy-sauer",
-  "brady-schmidt",
-  "pamela-lesch",
-  "marvin-weissnat",
-] as const;
-
-for (const slug of PATIENT_SLUGS) {
-  test(`patient ${slug} surfaces at least one mechanism`, async ({ page }) => {
-    await page.goto(`/patients/${slug}`);
+for (const fixture of PATIENT_FIXTURES) {
+  test(`patient ${fixture.slug} surfaces at least one mechanism`, async ({ page }) => {
+    await page.goto(`/patients/${fixture.slug}`);
 
     const runButton = page.getByTestId("run-new-match");
     await expect(runButton).toBeVisible();
     await runButton.click();
 
     // Button transition triggers a navigation to /patients/[slug]/runs/[id].
-    await page.waitForURL(new RegExp(`/patients/${slug}/runs/[^/]+$`), {
+    await page.waitForURL(new RegExp(`/patients/${fixture.slug}/runs/[^/]+$`), {
       timeout: 30_000,
     });
 

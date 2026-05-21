@@ -51,6 +51,21 @@ export const LabSchema = z.object({
 });
 export type Lab = z.infer<typeof LabSchema>;
 
+// Conditions on a `PatientProfile` whose clinicalStatus indicates the
+// condition is currently present. The agent treats missing clinicalStatus
+// as active (lenient — some sources omit it). Keep this in lockstep with
+// any downstream "filter to active" logic — the
+// identify-relevant-mechanisms node and its prompt module both depend on
+// this set; redefining elsewhere causes silent drift.
+export const ACTIVE_CONDITION_STATUSES = new Set<
+  "active" | "recurrence" | "relapse"
+>(["active", "recurrence", "relapse"]);
+
+export function isActiveCondition(c: { clinicalStatus?: string }): boolean {
+  if (!c.clinicalStatus) return true;
+  return (ACTIVE_CONDITION_STATUSES as Set<string>).has(c.clinicalStatus);
+}
+
 export const PatientProfileSchema = z.object({
   id: z.string(),
   displayName: z.string(),

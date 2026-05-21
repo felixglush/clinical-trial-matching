@@ -164,11 +164,13 @@ const PicksSchema = z.object({
   picks: z.array(z.object({
     conditionId: z.string(),
     rationale: z.string(),
-  })).max(5),
+  })),
 });
 ```
 
-Output is **ordered** by clinical priority. We honor the LLM's order when constructing `state.mechanisms`.
+Output is **ordered** by clinical priority. We honor the LLM's order when constructing `state.mechanisms` and slice to `MECHANISM_PICKS_CAP` (default 5) in the node.
+
+> **Implementation note (post-spec):** the design originally had `.max(5)` on the picks array. We dropped it because OpenRouter routes Anthropic models through Amazon Bedrock for many regions, and Bedrock's structured-output validator rejects JSON Schema `maxItems` with a 400. The cap is now enforced in the prompt instructions and by `picks.slice(0, MECHANISM_PICKS_CAP)`. Don't reintroduce `.max(...)` on this schema without re-testing the Bedrock route.
 
 ### Runtime — `apps/agent/src/nodes/identify-relevant-mechanisms.ts`
 

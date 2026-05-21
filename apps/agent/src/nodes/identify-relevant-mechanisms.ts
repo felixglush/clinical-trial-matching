@@ -167,11 +167,11 @@
  * compounds latency in ways the broader workflow can't observe.
  */
 
-import type {
-  Condition,
-  Mechanism,
-  MechanismDrop,
-  PatientProfile,
+import {
+  isActiveCondition,
+  type Mechanism,
+  type MechanismDrop,
+  type PatientProfile,
 } from "@clinical-trial-matching/shared";
 
 import {
@@ -185,12 +185,7 @@ import {
 } from "../prompts/mechanism.js";
 import { llm } from "../llm.js";
 import type { AgentStateType } from "../state.js";
-
-const ACTIVE_STATUSES = new Set<Condition["clinicalStatus"]>([
-  "active",
-  "recurrence",
-  "relapse",
-]);
+import { errorMessage } from "../util/error.js";
 
 export async function identifyRelevantMechanisms(
   state: AgentStateType,
@@ -255,7 +250,7 @@ function partitionActiveConditions(profile: PatientProfile): {
   const active: PatientProfile["conditions"] = [];
   const inactiveDrops: MechanismDrop[] = [];
   for (const c of profile.conditions) {
-    if (!c.clinicalStatus || ACTIVE_STATUSES.has(c.clinicalStatus)) {
+    if (isActiveCondition(c)) {
       active.push(c);
     } else {
       inactiveDrops.push({
@@ -321,8 +316,4 @@ function orderedMechanismsFromPicks(
     out.push({ ...cand, rationale: p.rationale });
   }
   return out;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

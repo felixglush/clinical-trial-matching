@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { listPatients } from "@/lib/patients-loader";
+import { listPatients } from "@/lib/patient-loader";
 
 export async function PatientSidebar() {
   const patients = await listPatients();

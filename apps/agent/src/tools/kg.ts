@@ -11,7 +11,6 @@ import type {
   KGNode,
   KGPath,
   Mechanism,
-  RepurposingCandidate,
 } from "@clinical-trial-matching/shared";
 
 import { resolveSnomedCondition, type ResolvedDisease } from "./snomed-mondo.js";
@@ -233,29 +232,6 @@ function buildSupportingPaths(
     }
   }
   return paths;
-}
-
-// ---------- Stubs reserved for downstream nodes ----------
-
-export async function findSharedPathways(
-  _diseaseId: string,
-  _depth: number,
-): Promise<KGNode[]> {
-  throw new Error("findSharedPathways not implemented");
-}
-
-export async function findDrugsTargetingPathways(
-  _pathwayIds: string[],
-): Promise<RepurposingCandidate[]> {
-  throw new Error("findDrugsTargetingPathways not implemented");
-}
-
-export async function pathBetween(
-  _fromId: string,
-  _toId: string,
-  _maxHops: number,
-): Promise<KGPath[]> {
-  throw new Error("pathBetween not implemented");
 }
 
 export { normalizeNodeType };
