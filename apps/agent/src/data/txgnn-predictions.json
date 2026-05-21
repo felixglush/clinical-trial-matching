@@ -1,0 +1,240 @@
+{
+  "MONDO:0008383": [
+    {
+      "drugId": "DB00563",
+      "drugName": "methotrexate",
+      "predIndication": 0.93,
+      "predContraindication": 0.1
+    },
+    {
+      "drugId": "DB00051",
+      "drugName": "adalimumab",
+      "predIndication": 0.91,
+      "predContraindication": 0.12
+    },
+    {
+      "drugId": "DB00005",
+      "drugName": "etanercept",
+      "predIndication": 0.9,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB08895",
+      "drugName": "tofacitinib",
+      "predIndication": 0.88,
+      "predContraindication": 0.15
+    },
+    {
+      "drugId": "DB00073",
+      "drugName": "rituximab",
+      "predIndication": 0.86,
+      "predContraindication": 0.17
+    },
+    {
+      "drugId": "DB11817",
+      "drugName": "baricitinib",
+      "predIndication": 0.85,
+      "predContraindication": 0.16
+    },
+    {
+      "drugId": "DB15091",
+      "drugName": "upadacitinib",
+      "predIndication": 0.83,
+      "predContraindication": 0.14
+    },
+    {
+      "drugId": "DB00026",
+      "drugName": "anakinra",
+      "predIndication": 0.78,
+      "predContraindication": 0.18
+    }
+  ],
+  "MONDO:0005148": [
+    {
+      "drugId": "DB00331",
+      "drugName": "metformin",
+      "predIndication": 0.94,
+      "predContraindication": 0.08
+    },
+    {
+      "drugId": "DB06292",
+      "drugName": "dapagliflozin",
+      "predIndication": 0.92,
+      "predContraindication": 0.09
+    },
+    {
+      "drugId": "DB09038",
+      "drugName": "empagliflozin",
+      "predIndication": 0.91,
+      "predContraindication": 0.1
+    },
+    {
+      "drugId": "DB06655",
+      "drugName": "liraglutide",
+      "predIndication": 0.89,
+      "predContraindication": 0.11
+    },
+    {
+      "drugId": "DB13928",
+      "drugName": "semaglutide",
+      "predIndication": 0.89,
+      "predContraindication": 0.11
+    },
+    {
+      "drugId": "DB01067",
+      "drugName": "glipizide",
+      "predIndication": 0.85,
+      "predContraindication": 0.12
+    },
+    {
+      "drugId": "DB01261",
+      "drugName": "sitagliptin",
+      "predIndication": 0.84,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB00030",
+      "drugName": "insulin lispro",
+      "predIndication": 0.82,
+      "predContraindication": 0.15
+    }
+  ],
+  "MONDO:0005233": [
+    {
+      "drugId": "DB09330",
+      "drugName": "osimertinib",
+      "predIndication": 0.93,
+      "predContraindication": 0.1
+    },
+    {
+      "drugId": "DB00530",
+      "drugName": "erlotinib",
+      "predIndication": 0.91,
+      "predContraindication": 0.12
+    },
+    {
+      "drugId": "DB09037",
+      "drugName": "pembrolizumab",
+      "predIndication": 0.9,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB09035",
+      "drugName": "nivolumab",
+      "predIndication": 0.89,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB00317",
+      "drugName": "gefitinib",
+      "predIndication": 0.88,
+      "predContraindication": 0.14
+    },
+    {
+      "drugId": "DB08865",
+      "drugName": "crizotinib",
+      "predIndication": 0.86,
+      "predContraindication": 0.15
+    },
+    {
+      "drugId": "DB11363",
+      "drugName": "alectinib",
+      "predIndication": 0.85,
+      "predContraindication": 0.15
+    },
+    {
+      "drugId": "DB11760",
+      "drugName": "atezolizumab",
+      "predIndication": 0.83,
+      "predContraindication": 0.16
+    }
+  ],
+  "MONDO:0007254": [
+    {
+      "drugId": "DB00675",
+      "drugName": "tamoxifen",
+      "predIndication": 0.92,
+      "predContraindication": 0.1
+    },
+    {
+      "drugId": "DB01006",
+      "drugName": "letrozole",
+      "predIndication": 0.91,
+      "predContraindication": 0.11
+    },
+    {
+      "drugId": "DB01217",
+      "drugName": "anastrozole",
+      "predIndication": 0.9,
+      "predContraindication": 0.11
+    },
+    {
+      "drugId": "DB00072",
+      "drugName": "trastuzumab",
+      "predIndication": 0.89,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB09073",
+      "drugName": "palbociclib",
+      "predIndication": 0.87,
+      "predContraindication": 0.14
+    },
+    {
+      "drugId": "DB11730",
+      "drugName": "ribociclib",
+      "predIndication": 0.86,
+      "predContraindication": 0.14
+    },
+    {
+      "drugId": "DB09074",
+      "drugName": "olaparib",
+      "predIndication": 0.84,
+      "predContraindication": 0.15
+    },
+    {
+      "drugId": "DB00997",
+      "drugName": "doxorubicin",
+      "predIndication": 0.78,
+      "predContraindication": 0.2
+    }
+  ],
+  "MONDO:0005300": [
+    {
+      "drugId": "DB00722",
+      "drugName": "lisinopril",
+      "predIndication": 0.9,
+      "predContraindication": 0.12
+    },
+    {
+      "drugId": "DB00678",
+      "drugName": "losartan",
+      "predIndication": 0.89,
+      "predContraindication": 0.12
+    },
+    {
+      "drugId": "DB06292",
+      "drugName": "dapagliflozin",
+      "predIndication": 0.88,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB09038",
+      "drugName": "empagliflozin",
+      "predIndication": 0.87,
+      "predContraindication": 0.13
+    },
+    {
+      "drugId": "DB16151",
+      "drugName": "finerenone",
+      "predIndication": 0.85,
+      "predContraindication": 0.14
+    },
+    {
+      "drugId": "DB00658",
+      "drugName": "sevelamer",
+      "predIndication": 0.82,
+      "predContraindication": 0.16
+    }
+  ]
+}

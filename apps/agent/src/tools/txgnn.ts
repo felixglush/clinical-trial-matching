@@ -58,13 +58,9 @@ let state: LoadState = { kind: "unloaded" };
 async function ensureLoaded(): Promise<void> {
   if (state.kind !== "unloaded") return;
   try {
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error — data files are generated at build time by `pnpm kg:build-txgnn`
     const predMod = await import("../data/txgnn-predictions.json", {
       with: { type: "json" },
     });
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-    // @ts-expect-error — data files are generated at build time by `pnpm kg:build-txgnn`
     const explMod = await import("../data/txgnn-explanations.json", {
       with: { type: "json" },
     });
