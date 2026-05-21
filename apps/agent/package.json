@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "langgraphjs dev",
     "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@clinical-trial-matching/shared": "workspace:*",
@@ -18,6 +19,7 @@
   },
   "devDependencies": {
     "@langchain/langgraph-cli": "1.2.2",
-    "typescript": "6.0.3"
+    "typescript": "6.0.3",
+    "vitest": "4.1.7"
   }
 }
