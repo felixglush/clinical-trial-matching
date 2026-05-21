@@ -45,6 +45,13 @@ const OUT_DIR = path.join(REPO_ROOT, "apps/agent/src/data");
 const OUT_PREDS = path.join(OUT_DIR, "txgnn-predictions.json");
 const OUT_EXPLS = path.join(OUT_DIR, "txgnn-explanations.json");
 
+// Filter thresholds — drop predictions below INDICATION_THRESHOLD and any
+// where contraindication dominates. Capped to TOP_K_PER_DISEASE rows after
+// sort. Tune here if real TxGNN output proves noisier or sparser than the
+// curated starter dataset.
+const INDICATION_THRESHOLD = 0.5;
+const TOP_K_PER_DISEASE = 50;
+
 // Raw row after parsing the dump but before filter/shape. Stable contract
 // with filterAndShape — adapters for different upstream formats normalize
 // to this shape.
@@ -82,7 +89,7 @@ export function filterAndShape(
 } {
   // Threshold filter — keep rows where indication is meaningful AND beats
   // the contraindication signal. See module docstring for rationale.
-  const kept = raw.filter((r) => r.pi > 0.5 && r.pc < r.pi);
+  const kept = raw.filter((r) => r.pi > INDICATION_THRESHOLD && r.pc < r.pi);
 
   // Group by disease, sort desc by pi, cap top-K.
   const byDisease = new Map<string, RawRow[]>();
@@ -139,15 +146,27 @@ async function parsePredictionsDump(dumpPath: string): Promise<RawRow[]> {
   const text = await readFile(dumpPath, "utf8");
   const lines = text.split("\n").filter((l) => l.trim().length > 0);
   const header = lines[0]!.split("\t");
+  const COL_NAMES = {
+    disease: "disease_mondo",
+    drugId: "drug_id",
+    drugName: "drug_name",
+    pi: "pred_indication",
+    pc: "pred_contraindication",
+  } as const;
   const idx = {
-    disease: header.indexOf("disease_mondo"),
-    drugId: header.indexOf("drug_id"),
-    drugName: header.indexOf("drug_name"),
-    pi: header.indexOf("pred_indication"),
-    pc: header.indexOf("pred_contraindication"),
+    disease: header.indexOf(COL_NAMES.disease),
+    drugId: header.indexOf(COL_NAMES.drugId),
+    drugName: header.indexOf(COL_NAMES.drugName),
+    pi: header.indexOf(COL_NAMES.pi),
+    pc: header.indexOf(COL_NAMES.pc),
   };
   for (const [k, v] of Object.entries(idx)) {
-    if (v < 0) throw new Error(`Missing column ${k} in ${dumpPath}`);
+    if (v < 0) {
+      const colName = COL_NAMES[k as keyof typeof COL_NAMES];
+      throw new Error(
+        `${dumpPath}: missing required column "${colName}". Found: ${header.join(" | ")}`,
+      );
+    }
   }
   const out: RawRow[] = [];
   for (let i = 1; i < lines.length; i++) {
@@ -174,6 +193,16 @@ async function parseExplanationsDump(
   return JSON.parse(text) as Record<string, RawExplanation>;
 }
 
+// Sort object keys so committed artifacts have stable ordering — future
+// regenerations against reordered inputs produce minimal diffs.
+function sortedByKey<T>(obj: Record<string, T>): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const k of Object.keys(obj).sort()) {
+    out[k] = obj[k]!;
+  }
+  return out;
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -187,7 +216,7 @@ async function main(): Promise<void> {
 
   console.log("Filtering and shaping...");
   const { predictions, explanations } = filterAndShape(raw, {
-    topKPerDisease: 50,
+    topKPerDisease: TOP_K_PER_DISEASE,
     rawExplanations: rawExpls,
   });
   const totalPreds = Object.values(predictions).reduce((a, b) => a + b.length, 0);
@@ -196,15 +225,15 @@ async function main(): Promise<void> {
   );
 
   await mkdir(OUT_DIR, { recursive: true });
-  await writeFile(OUT_PREDS, JSON.stringify(predictions, null, 2) + "\n");
-  await writeFile(OUT_EXPLS, JSON.stringify(explanations, null, 2) + "\n");
+  await writeFile(OUT_PREDS, JSON.stringify(sortedByKey(predictions), null, 2) + "\n");
+  await writeFile(OUT_EXPLS, JSON.stringify(sortedByKey(explanations), null, 2) + "\n");
   console.log(`Wrote ${OUT_PREDS}`);
   console.log(`Wrote ${OUT_EXPLS}`);
 }
 
 // Only run main when this file is executed directly (not when imported by
 // the test). Standard tsx idiom.
-if (import.meta.url.endsWith(process.argv[1] ?? "")) {
+if (path.resolve(process.argv[1] ?? "") === path.resolve(import.meta.filename)) {
   main().catch((err) => {
     console.error(err);
     process.exit(1);

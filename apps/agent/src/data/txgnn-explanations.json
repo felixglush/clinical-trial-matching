@@ -40,47 +40,6 @@
       }
     ]
   },
-  "MONDO:0008383::DB00563": {
-    "nodes": [
-      {
-        "id": "DB00563",
-        "name": "methotrexate",
-        "type": "drug"
-      },
-      {
-        "id": "DHFR",
-        "name": "DHFR",
-        "type": "gene_protein"
-      },
-      {
-        "id": "GO:0046655",
-        "name": "folate metabolism",
-        "type": "biological_process"
-      },
-      {
-        "id": "MONDO:0008383",
-        "name": "rheumatoid arthritis",
-        "type": "disease"
-      }
-    ],
-    "edges": [
-      {
-        "source": "DB00563",
-        "target": "DHFR",
-        "relation": "target"
-      },
-      {
-        "source": "DHFR",
-        "target": "GO:0046655",
-        "relation": "interacts with"
-      },
-      {
-        "source": "GO:0046655",
-        "target": "MONDO:0008383",
-        "relation": "associated with"
-      }
-    ]
-  },
   "MONDO:0005233::DB09330": {
     "nodes": [
       {
@@ -159,6 +118,47 @@
       {
         "source": "GO:0038127",
         "target": "MONDO:0007254",
+        "relation": "associated with"
+      }
+    ]
+  },
+  "MONDO:0008383::DB00563": {
+    "nodes": [
+      {
+        "id": "DB00563",
+        "name": "methotrexate",
+        "type": "drug"
+      },
+      {
+        "id": "DHFR",
+        "name": "DHFR",
+        "type": "gene_protein"
+      },
+      {
+        "id": "GO:0046655",
+        "name": "folate metabolism",
+        "type": "biological_process"
+      },
+      {
+        "id": "MONDO:0008383",
+        "name": "rheumatoid arthritis",
+        "type": "disease"
+      }
+    ],
+    "edges": [
+      {
+        "source": "DB00563",
+        "target": "DHFR",
+        "relation": "target"
+      },
+      {
+        "source": "DHFR",
+        "target": "GO:0046655",
+        "relation": "interacts with"
+      },
+      {
+        "source": "GO:0046655",
+        "target": "MONDO:0008383",
         "relation": "associated with"
       }
     ]
