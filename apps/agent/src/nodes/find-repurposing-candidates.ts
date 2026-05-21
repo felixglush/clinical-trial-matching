@@ -84,14 +84,14 @@ export async function findRepurposingCandidates(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
   const mechanisms = state.mechanisms;
-  if (!mechanisms || mechanisms.length === 0) {
+  if (mechanisms.length === 0) {
     return { repurposingCandidates: [] };
   }
 
   try {
     await ensureTxgnnLoaded();
   } catch (err) {
-    return { error: `find-repurposing-candidates: ${errorMessage(err)}` };
+    return { error: `Failed to load TxGNN data: ${errorMessage(err)}` };
   }
 
   const byDrug = new Map<string, DrugAccumulator>();
