@@ -26,5 +26,6 @@ export const MechanismSchema = z.object({
   geneTargets: z.array(KGNodeSchema),
   pathways: z.array(KGNodeSchema),
   supportingPaths: z.array(KGPathSchema),
+  rationale: z.string(),
 });
 export type Mechanism = z.infer<typeof MechanismSchema>;
