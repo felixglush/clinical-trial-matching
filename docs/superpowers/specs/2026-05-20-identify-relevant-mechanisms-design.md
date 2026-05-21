@@ -76,12 +76,12 @@ Add a required `rationale: z.string()` field to `MechanismSchema`. Verified safe
 Adds `pnpm kg:build-crosswalk` (with `data/kg/nodes.csv` as a prerequisite — fail with clear message if missing).
 
 **Inputs**
-- `mondo.sssom.tsv` from MONDO's GitHub release (`https://github.com/monarch-initiative/mondo/releases/latest/download/mondo.sssom.tsv`). Download to `data/kg/raw/mondo.sssom.tsv` (skip if exists, like the PrimeKG download script).
+- `mondo.sssom.tsv` from MONDO's repo (`https://raw.githubusercontent.com/monarch-initiative/mondo/master/src/ontology/mappings/mondo.sssom.tsv`; pinned to commit/tag at release time — see script header). Download to `data/kg/raw/mondo.sssom.tsv` (skip if exists, like the PrimeKG download script). File is ~13MB, has a YAML metadata header (lines beginning with `#`) followed by a 6-column TSV: `subject_id`, `subject_label`, `predicate_id`, `object_id`, `object_label`, `mapping_justification`. `subject_id` is `MONDO:nnnnnnn`; SNOMED entries appear in `object_id` with prefix `SCTID:` (e.g., `SCTID:64572001`).
 - `data/kg/nodes.csv` (already built by `kg:build-subset`).
 
 **Algorithm**
 1. Stream PrimeKG nodes; for `node_type == "disease"`, build `mondoNumericId → { primekgNodeId, primekgName }`. For `node_source == "MONDO_grouped"`, split `node_id` on `_` and map every member numeric ID to the same PrimeKG node.
-2. Stream SSSOM rows. Keep only rows where `object_id` starts with `SNOMEDCT:` (the schema maps MONDO → external; SNOMED is the object) and `predicate_id` ∈ {`skos:exactMatch`, `skos:closeMatch`}. Drop `broadMatch` / `narrowMatch` — too lossy for clinical use.
+2. Stream SSSOM rows. Keep only rows where `object_id` starts with `SCTID:` (the schema maps MONDO → external; SNOMED is the object) and `predicate_id` ∈ {`skos:exactMatch`, `skos:closeMatch`}. Drop `broadMatch` / `narrowMatch` — too lossy for clinical use.
 3. For each kept row, parse the MONDO numeric ID from `subject_id` (strip `MONDO:` prefix and leading zeros). Look up the PrimeKG node. Skip if not in our subset.
 4. Collision policy: same SNOMED code mapped to two MONDO entries → prefer `skos:exactMatch` over `skos:closeMatch`; if still tied, keep first by SSSOM row order.
 5. Write `apps/agent/src/data/snomed-to-primekg.json`.
