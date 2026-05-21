@@ -1,16 +1,25 @@
-# TxGNN-backed repurposing integration (data layer + discovery channel) Implementation Plan
+# Mechanism-driven feed layer: TxGNN repurposing candidates + search-strategy generation
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land the TxGNN data ingestion + lookup layer, rewrite `find-repurposing-candidates` to use it, and implement `search-trials` so trials are discovered via both the search-strategy channel and the repurposing channel (intervention drug names from TxGNN).
+**Goal:** Build the two peer feeders that consume `state.mechanisms` and produce the inputs `search-trials` will eventually consume:
 
-**Architecture:** Build-time script fetches and normalizes TxGNN's distributed prediction tables into two committed JSON artifacts (predictions keyed by MONDO id, explanations keyed by `mondoId::drugId`). Runtime `tools/txgnn.ts` is a pure in-memory lookup, mirroring `tools/snomed-mondo.ts`. `find-repurposing-candidates` consumes `state.mechanisms`, calls the lookup, dedupes by drug id, and emits `RepurposingCandidate[]`. `search-trials` queries `clinicaltrials.gov` once for the search strategy and once per repurposing candidate (intervention name), unions and dedupes by `nctId`. This plan stops at populating `state.candidates`; trial-eval enrichments and the `rank-and-synthesize` appendix get separate plans.
+1. `find-repurposing-candidates` — TxGNN lookup, dedup by drug id → `state.repurposingCandidates`.
+2. `generate-search-strategy` — LLM-driven query/filter/broadening generation → `state.searchStrategy`.
 
-**Tech Stack:** TypeScript (strict, `bundler` module resolution), Node 24, pnpm workspaces, Zod, LangGraph.js, vitest, tsx (for build scripts), neo4j-driver (used by adjacent code; this plan does not touch Neo4j directly), ClinicalTrials.gov API v2 (`https://clinicaltrials.gov/api/v2/studies`).
+This plan does **not** implement `search-trials` or `tools/clinicaltrials.ts`. Those are the consumer node + its network integration and ship as their own focused follow-on plan. With this plan landed, both upstream feeders are populated and verifiable in isolation; the follow-on plan can do CT.gov API + union/dedup in one place.
 
-**Spec:** `docs/superpowers/specs/2026-05-21-drug-eval-subgraph-design.md` (v2). This plan implements the spec's "Scope" first three bullets and leaves the trial-eval enrichments and rank-and-synthesize appendix for follow-on plans (which will need to implement those node's baselines first).
+**Architecture:** The graph already runs these two nodes in parallel (`graph.ts:26-27` — two edges from `identify-relevant-mechanisms`). LangGraph handles concurrency; we just implement the bodies. Both nodes consume `state.mechanisms` + `state.patientProfile`. Their outputs are independent and converge only at `search-trials` (next plan).
 
-**Conventions referenced:** `docs/codebase-conventions.md` (file layout, naming, test style), `CLAUDE.md` (pin exact dependency versions — `pnpm add -E`).
+Build-time: a script fetches and normalizes TxGNN's distributed prediction tables into two committed JSON artifacts (predictions keyed by MONDO id, explanations keyed by `mondoId::drugId`). Runtime `tools/txgnn.ts` is a pure in-memory lookup, mirroring `tools/snomed-mondo.ts`. `find-repurposing-candidates` calls the lookup, dedupes across mechanisms by drug id, and emits `RepurposingCandidate[]`. `generate-search-strategy` calls an LLM via `withStructuredOutput(SearchStrategySchema)` with the patient + mechanism context, optionally broadening on the second pass.
+
+**Tech Stack:** TypeScript (strict, `bundler` module resolution), Node 24, pnpm workspaces, Zod, LangGraph.js, vitest, tsx (for build scripts). No Neo4j changes; no HTTP integrations (those belong to the follow-on plan).
+
+**Spec:** `docs/superpowers/specs/2026-05-21-drug-eval-subgraph-design.md` (v2). This plan implements the spec's `find-repurposing-candidates` rewrite. The spec's `search-trials` implementation and trial-eval / rank-and-synthesize enrichments move to follow-on plans (which will also need to implement the corresponding stub bodies).
+
+`generate-search-strategy` is *not* explicitly in the spec's scope — it's a dependency we're pulling into this plan because it's the peer feeder. The spec assumes it produces a `SearchStrategy` that `search-trials` consumes; nothing in the spec mandates *how* the strategy is generated. We implement it here with a structured-output LLM call mirroring `identify-relevant-mechanisms`.
+
+**Conventions referenced:** `docs/codebase-conventions.md` (file layout, naming, test style), `CLAUDE.md` (pin exact dependency versions — `pnpm add -E`). Test conventions follow `identify-relevant-mechanisms.test.ts` and `extract-patient-profile.test.ts`.
 
 ---
 
@@ -22,20 +31,38 @@
   - `apps/agent/src/tools/txgnn.test.ts` — vitest tests against fixtures.
   - `apps/agent/src/tools/__fixtures__/txgnn-predictions-fixture.json` — small hand-crafted fixture for tests.
   - `apps/agent/src/tools/__fixtures__/txgnn-explanations-fixture.json` — same.
-  - `apps/agent/src/tools/clinicaltrials.test.ts` — vitest tests.
   - `apps/agent/src/nodes/find-repurposing-candidates.test.ts` — vitest tests.
-  - `apps/agent/src/nodes/search-trials.test.ts` — vitest tests.
+  - `apps/agent/src/nodes/generate-search-strategy.test.ts` — vitest tests.
   - `scripts/build-txgnn-data.ts` — build script.
   - `scripts/build-txgnn-data.test.ts` — unit test for the script's transform function (fixture in, expected JSON out).
 - **Modify:**
+  - `packages/shared/src/mechanism.ts` — add `mondoId` to `MechanismSchema`.
   - `packages/shared/src/repurposing.ts` — extend `RepurposingCandidateSchema` with optional `predIndication`, `predContraindication`.
-  - `apps/agent/src/tools/clinicaltrials.ts` — replace `throw new Error(...)` with a real CT.gov API v2 implementation.
+  - `apps/agent/src/tools/kg.ts` — populate `mondoId` on `CandidateMechanism`.
   - `apps/agent/src/nodes/find-repurposing-candidates.ts` — replace stub with TxGNN-backed implementation.
-  - `apps/agent/src/nodes/search-trials.ts` — replace stub with two-query union+dedup.
+  - `apps/agent/src/nodes/generate-search-strategy.ts` — replace stub with LLM-driven implementation.
+  - `apps/agent/src/prompts/search-strategy.ts` — replace stub prompt; add `SearchStrategyPickSchema` for `withStructuredOutput`.
   - `package.json` (repo root) — add `kg:build-txgnn` script.
-- **Generated (committed if size ≤ ~10 MB; decision in Task 7):**
+- **Generated (committed if size ≤ ~10 MB; decision in the build-script task):**
   - `apps/agent/src/data/txgnn-predictions.json`
   - `apps/agent/src/data/txgnn-explanations.json`
+
+## Execution order
+
+Front-load TxGNN unknowns; LLM work follows the established `identify-relevant-mechanisms` pattern. Tasks within each group can be parallelized by separate agents if you want, but the dependency edges are:
+
+```
+Task 0 (TxGNN format discovery)         ──┐
+                                          ▼
+Task 1 (shared-schema extensions)  ─────► Task 2 (tools/txgnn.ts) ─► Task 3 (find-repurposing-candidates)
+                                                                         │
+Task 4 (generate-search-strategy)  ───────────────────────────────────► (parallel; independent of Task 3)
+                                                                         │
+Task 5 (build-script skeleton + pnpm wiring)                             │
+Task 6 (build-script implementation, run against real dump)              │
+```
+
+Task 4 has no dependency on Tasks 0/2/3/5/6 — it could run anywhere after Task 1. Put it after Task 3 in execution so the TxGNN-heavy work lands first.
 
 ---
 
@@ -114,7 +141,7 @@ Research date: 2026-05-21. **Re-verify before re-running the build if more than 
 - [Anything the Explore agent flagged as ambiguous]
 ```
 
-If the Explore agent reports that explanations are *only* regeneratable (not distributed), capture that — Task 7 will need to handle that case by emitting an empty explanations file and relying on a later metapath-Cypher fallback (which lives in a future plan, not this one).
+If the Explore agent reports that explanations are *only* regeneratable (not distributed), capture that — Task 6 will need to handle that case by emitting an empty explanations file and relying on a later metapath-Cypher fallback (which lives in a future plan, not this one).
 
 - [ ] **Step 3: Commit**
 
@@ -506,256 +533,8 @@ git commit -m "Add tools/txgnn.ts: in-memory lookup for TxGNN predictions"
 
 ---
 
-## Task 3: Implement `clinicaltrials.ts` (CT.gov API v2)
 
-**Files:**
-- Modify: `apps/agent/src/tools/clinicaltrials.ts`
-- Create: `apps/agent/src/tools/clinicaltrials.test.ts`
-
-Background on the API: ClinicalTrials.gov API v2 lives at `https://clinicaltrials.gov/api/v2/studies`. It accepts query params including `query.cond` (condition), `query.intr` (intervention), `filter.overallStatus` (e.g. `RECRUITING|NOT_YET_RECRUITING`), `pageSize`, and `format=json`. Each returned study has a nested `protocolSection` with `identificationModule.nctId`, `identificationModule.briefTitle`, `descriptionModule.briefSummary`, `conditionsModule.conditions`, `armsInterventionsModule.interventions[].name`, `designModule.phases`, `statusModule.overallStatus`, `eligibilityModule.eligibilityCriteria`, and `contactsLocationsModule.locations`.
-
-This task implements **a single named search function** (the existing `searchClinicalTrials` signature accepting `SearchStrategy`). Task 5 (`search-trials.ts`) will issue two queries: one from the strategy, one per repurposing candidate. So this file also needs a sibling helper that takes raw query params; that helper is what both callers use.
-
-- [ ] **Step 1: Confirm the existing types we need**
-
-Read `packages/shared/src/trial.ts:6-26` to confirm `TrialLocation` and `TrialCandidate` shapes. Read `packages/shared/src/searchStrategy.ts` (or wherever `SearchStrategy` lives) to know its fields.
-
-Run: `grep -rn "SearchStrategySchema\|SearchStrategy " /Users/felixg/dev/clinical-trial-matching/packages/shared/src/ | head`
-
-You should find `SearchStrategySchema` and confirm field names (`conditions`, `interventions`, `mechanisms`, or similar). Use whatever fields actually exist — *do not invent field names*.
-
-- [ ] **Step 2: Write the failing test**
-
-`apps/agent/src/tools/clinicaltrials.test.ts`:
-
-```ts
-import { afterEach, describe, expect, it, vi } from "vitest";
-
-import { searchClinicalTrialsRaw } from "./clinicaltrials.js";
-
-const realFetch = global.fetch;
-afterEach(() => {
-  global.fetch = realFetch;
-  vi.restoreAllMocks();
-});
-
-function mockFetchJson(body: unknown) {
-  global.fetch = vi.fn(async () =>
-    new Response(JSON.stringify(body), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
-  ) as unknown as typeof fetch;
-}
-
-const SAMPLE_STUDY = {
-  protocolSection: {
-    identificationModule: {
-      nctId: "NCT05000001",
-      briefTitle: "A Phase 2 Trial of Dapagliflozin in T2DM with CKD",
-    },
-    descriptionModule: {
-      briefSummary: "Investigating dapagliflozin in adults with type 2 diabetes and stage-3 chronic kidney disease.",
-    },
-    conditionsModule: { conditions: ["Type 2 Diabetes Mellitus", "Chronic Kidney Disease"] },
-    armsInterventionsModule: {
-      interventions: [{ name: "Dapagliflozin" }, { name: "Placebo" }],
-    },
-    designModule: { phases: ["PHASE2"] },
-    statusModule: { overallStatus: "RECRUITING" },
-    eligibilityModule: { eligibilityCriteria: "Adults ≥ 18; eGFR 30–60; ..." },
-    contactsLocationsModule: {
-      locations: [
-        { facility: "Mass General", city: "Boston", state: "MA", country: "United States", status: "RECRUITING" },
-      ],
-    },
-  },
-};
-
-describe("searchClinicalTrialsRaw", () => {
-  it("constructs the v2 URL with query.cond and query.intr params", async () => {
-    mockFetchJson({ studies: [] });
-    await searchClinicalTrialsRaw({ condition: "Type 2 Diabetes", intervention: "metformin" });
-    const url = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(url).toContain("clinicaltrials.gov/api/v2/studies");
-    expect(url).toContain("query.cond=Type+2+Diabetes");
-    expect(url).toContain("query.intr=metformin");
-    expect(url).toContain("format=json");
-  });
-
-  it("maps a study record into a TrialCandidate with phase + status normalized", async () => {
-    mockFetchJson({ studies: [SAMPLE_STUDY] });
-    const out = await searchClinicalTrialsRaw({ condition: "T2DM" });
-    expect(out).toHaveLength(1);
-    expect(out[0].nctId).toBe("NCT05000001");
-    expect(out[0].title).toContain("Dapagliflozin");
-    expect(out[0].conditions).toEqual(["Type 2 Diabetes Mellitus", "Chronic Kidney Disease"]);
-    expect(out[0].interventions).toEqual(["Dapagliflozin", "Placebo"]);
-    expect(out[0].phase).toBe("PHASE2");
-    expect(out[0].status).toBe("RECRUITING");
-    expect(out[0].locations[0].facility).toBe("Mass General");
-  });
-
-  it("returns empty array when CT.gov returns no studies", async () => {
-    mockFetchJson({ studies: [] });
-    const out = await searchClinicalTrialsRaw({ condition: "X" });
-    expect(out).toEqual([]);
-  });
-
-  it("throws on HTTP error", async () => {
-    global.fetch = vi.fn(async () =>
-      new Response("server error", { status: 500 }),
-    ) as unknown as typeof fetch;
-    await expect(
-      searchClinicalTrialsRaw({ condition: "X" }),
-    ).rejects.toThrow(/CT\.gov/);
-  });
-});
-```
-
-- [ ] **Step 3: Run the test to confirm it fails**
-
-Run: `pnpm --filter agent test src/tools/clinicaltrials.test.ts`
-Expected: FAIL — `searchClinicalTrialsRaw` is not exported.
-
-- [ ] **Step 4: Write the implementation**
-
-`apps/agent/src/tools/clinicaltrials.ts`:
-
-```ts
-// CT.gov API v2 thin wrapper. Two entry points:
-//   - searchClinicalTrials(strategy)    — used by search-trials.ts for the
-//                                          search-strategy channel
-//   - searchClinicalTrialsRaw(params)   — used by search-trials.ts for the
-//                                          per-repurposing-candidate channel
-// Both return TrialCandidate[]; callers union and dedupe by nctId.
-//
-// We default to active-recruiting trials (RECRUITING + NOT_YET_RECRUITING)
-// because the agent's job is finding *enrollable* trials. Completed and
-// withdrawn studies are noise for this task.
-
-import type {
-  SearchStrategy,
-  TrialCandidate,
-  TrialLocation,
-} from "@clinical-trial-matching/shared";
-
-const BASE_URL = "https://clinicaltrials.gov/api/v2/studies";
-const DEFAULT_PAGE_SIZE = 50;
-const ACTIVE_STATUSES = ["RECRUITING", "NOT_YET_RECRUITING"];
-
-export type RawQueryParams = {
-  condition?: string;
-  intervention?: string;
-  pageSize?: number;
-  activeOnly?: boolean; // default true
-};
-
-export async function searchClinicalTrialsRaw(
-  params: RawQueryParams,
-): Promise<TrialCandidate[]> {
-  const url = buildUrl(params);
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(
-      `CT.gov request failed: ${res.status} ${res.statusText} (url=${url})`,
-    );
-  }
-  const body = (await res.json()) as { studies?: unknown[] };
-  const studies = body.studies ?? [];
-  return studies.map(parseStudy).filter((c): c is TrialCandidate => c !== null);
-}
-
-export async function searchClinicalTrials(
-  strategy: SearchStrategy,
-): Promise<TrialCandidate[]> {
-  // SearchStrategy has condition + mechanism term lists; we join them into
-  // one cond query and (if present) the strategy's intervention hint into
-  // one intr query.
-  //
-  // Field names below MUST match the actual SearchStrategySchema. If you're
-  // reading this after editing the schema, update here too.
-  const cond = strategy.conditions?.join(" OR ") ?? "";
-  const intr = strategy.interventions?.join(" OR ");
-  return searchClinicalTrialsRaw({
-    condition: cond || undefined,
-    intervention: intr || undefined,
-  });
-}
-
-function buildUrl(params: RawQueryParams): string {
-  const u = new URL(BASE_URL);
-  if (params.condition) u.searchParams.set("query.cond", params.condition);
-  if (params.intervention) u.searchParams.set("query.intr", params.intervention);
-  if (params.activeOnly !== false) {
-    u.searchParams.set("filter.overallStatus", ACTIVE_STATUSES.join("|"));
-  }
-  u.searchParams.set("pageSize", String(params.pageSize ?? DEFAULT_PAGE_SIZE));
-  u.searchParams.set("format", "json");
-  return u.toString();
-}
-
-function parseStudy(study: unknown): TrialCandidate | null {
-  const ps = (study as { protocolSection?: Record<string, unknown> })
-    .protocolSection;
-  if (!ps) return null;
-  const ident = ps.identificationModule as
-    | { nctId?: string; briefTitle?: string }
-    | undefined;
-  const desc = ps.descriptionModule as { briefSummary?: string } | undefined;
-  const cond = ps.conditionsModule as { conditions?: string[] } | undefined;
-  const arms = ps.armsInterventionsModule as
-    | { interventions?: { name?: string }[] }
-    | undefined;
-  const design = ps.designModule as { phases?: string[] } | undefined;
-  const status = ps.statusModule as { overallStatus?: string } | undefined;
-  const elig = ps.eligibilityModule as { eligibilityCriteria?: string } | undefined;
-  const locs = ps.contactsLocationsModule as
-    | { locations?: TrialLocation[] }
-    | undefined;
-
-  if (!ident?.nctId || !ident?.briefTitle || !status?.overallStatus) {
-    return null;
-  }
-
-  return {
-    nctId: ident.nctId,
-    title: ident.briefTitle,
-    briefSummary: desc?.briefSummary,
-    conditions: cond?.conditions ?? [],
-    interventions: (arms?.interventions ?? []).flatMap((i) =>
-      i.name ? [i.name] : [],
-    ),
-    phase: design?.phases?.[0],
-    status: status.overallStatus,
-    eligibilityCriteriaText: elig?.eligibilityCriteria,
-    locations: locs?.locations ?? [],
-  };
-}
-```
-
-**Field-name caveat:** the `strategy.conditions` and `strategy.interventions` accesses in `searchClinicalTrials` are inferred from the spec's wording. If `SearchStrategySchema` uses different field names, fix them here. The test suite for *this* file does not depend on those names (it uses the raw helper) so it'll pass either way.
-
-- [ ] **Step 5: Run the test**
-
-Run: `pnpm --filter agent test src/tools/clinicaltrials.test.ts`
-Expected: PASS, 4 tests.
-
-- [ ] **Step 6: Run all agent tests to make sure nothing else broke**
-
-Run: `pnpm --filter agent test`
-Expected: ALL PASS.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add apps/agent/src/tools/clinicaltrials.ts apps/agent/src/tools/clinicaltrials.test.ts
-git commit -m "Implement clinicaltrials.ts: CT.gov API v2 wrapper"
-```
-
----
-
-## Task 4: Rewrite `find-repurposing-candidates.ts`
+## Task 3: Rewrite `find-repurposing-candidates.ts`
 
 The node consumes `state.mechanisms` and uses each mechanism's `mondoId` (added in Task 1) to call `lookupPredictions`. Deduplicates across mechanisms by drug id; logs uncovered MONDOs; returns `{repurposingCandidates: ...}` or `{error: ...}` if the TxGNN data isn't loadable.
 
@@ -892,7 +671,7 @@ describe("findRepurposingCandidates", () => {
     // pointing __setFixturesForTests at a fresh fixture, then directly
     // poking the module via a re-import would be brittle; instead, the
     // production code path is exercised by the integration smoke test in
-    // Task 7. This unit test asserts the node SHAPE — that an error from
+    // Task 6. This unit test asserts the node SHAPE — that an error from
     // ensureTxgnnLoaded surfaces as {error: ...}. We do that by mocking
     // ensureTxgnnLoaded itself.
     const txgnn = await import("../tools/txgnn.js");
@@ -1063,243 +842,317 @@ git commit -m "Rewrite find-repurposing-candidates with TxGNN lookup"
 
 ---
 
-## Task 5: Implement `search-trials.ts`
+## Task 4: Implement `generate-search-strategy`
+
+The peer feeder to `find-repurposing-candidates`. Consumes `state.patientProfile` + `state.mechanisms` + `state.searchStrategy` (the previous attempt, when looping) and emits a `SearchStrategy` (`{queries: string[], filters, attempt, broadeningApplied}`). Structured-output LLM call — same shape as `identify-relevant-mechanisms` so we reuse the established pattern.
+
+The graph's `pre-filter` may route back to this node for a retry; the spec calls that "loop". The previous strategy comes in via `state.searchStrategy`, and we broaden (relax filters, generalize query terms) when it's non-null. `state.attempts` is incremented every call.
 
 **Files:**
-- Modify: `apps/agent/src/nodes/search-trials.ts`
-- Create: `apps/agent/src/nodes/search-trials.test.ts`
+- Modify: `apps/agent/src/prompts/search-strategy.ts` — replace stub prompt, export `SearchStrategyPickSchema`.
+- Modify: `apps/agent/src/nodes/generate-search-strategy.ts` — replace stub with LLM call.
+- Create: `apps/agent/src/nodes/generate-search-strategy.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the prompt + structured-output schema**
 
-`apps/agent/src/nodes/search-trials.test.ts`:
+`apps/agent/src/prompts/search-strategy.ts` — replace the entire file:
+
+```ts
+import { z } from "zod";
+
+import {
+  type Mechanism,
+  type PatientProfile,
+  type SearchStrategy,
+  SearchFiltersSchema,
+} from "@clinical-trial-matching/shared";
+
+// What the LLM returns. We accept just the queryable bits and the broadening
+// notes; `attempt` is set by the node (LLM should not invent it).
+//
+// Filters: optional — model may suggest narrowing (e.g. PHASE2 only) or
+// broadening (drop phase filter on retry). The schema above is what we
+// validate against. SearchFiltersSchema must accept partial input.
+export const SearchStrategyPickSchema = z.object({
+  queries: z.array(z.string()).min(1),
+  filters: SearchFiltersSchema,
+  broadeningApplied: z.array(z.string()),
+});
+export type SearchStrategyPick = z.infer<typeof SearchStrategyPickSchema>;
+
+const FIRST_ATTEMPT_INSTRUCTIONS = `
+You are generating a search strategy for clinicaltrials.gov to find trials
+that may help the patient. Produce 1–4 free-text search queries combining
+the patient's primary conditions with mechanism-level terms (gene targets,
+pathway names) when they sharpen the query.
+
+Each query should be a short string ClinicalTrials.gov's full-text search
+will accept — e.g. "type 2 diabetes SGLT2", "non-small cell lung carcinoma
+EGFR".
+
+Prefer fewer high-precision queries over many noisy ones. Avoid drug names
+in queries here — drug-specific lookups happen in a separate channel.
+
+Filters: prefer recruiting trials. If a phase or country is clearly
+appropriate from the profile, include it; otherwise leave that filter unset.
+broadeningApplied should be an empty list on the first attempt.
+`.trim();
+
+const BROADENING_INSTRUCTIONS = `
+A previous attempt yielded too few candidates. Broaden the strategy and
+record exactly what you changed in broadeningApplied (e.g. ["dropped phase
+filter", "generalized gene-name to pathway-family"]). Do not narrow.
+`.trim();
+
+export function searchStrategyPrompt(
+  profile: PatientProfile,
+  mechanisms: Mechanism[],
+  previousAttempt: SearchStrategy | null,
+): string {
+  const conditions = profile.conditions
+    .map((c) => `- ${c.display} (SNOMED ${c.code}, status: ${c.clinicalStatus ?? "unspecified"})`)
+    .join("\n");
+  const mechBlock = mechanisms
+    .map((m) => {
+      const genes = m.geneTargets.slice(0, 6).map((g) => g.name).join(", ");
+      const paths = m.pathways.slice(0, 6).map((p) => p.name).join(", ");
+      return `- ${m.conditionName}\n    genes: ${genes || "(none)"}\n    pathways: ${paths || "(none)"}`;
+    })
+    .join("\n");
+
+  const previousBlock = previousAttempt
+    ? `\nPrevious attempt (attempt ${previousAttempt.attempt}):\n  queries: ${previousAttempt.queries.join(" | ")}\n  filters: ${JSON.stringify(previousAttempt.filters)}\n  broadeningApplied: ${previousAttempt.broadeningApplied.join("; ") || "(none)"}\n`
+    : "";
+
+  const instructions = previousAttempt
+    ? `${FIRST_ATTEMPT_INSTRUCTIONS}\n\n${BROADENING_INSTRUCTIONS}`
+    : FIRST_ATTEMPT_INSTRUCTIONS;
+
+  return `Patient conditions:
+${conditions || "(none)"}
+
+Patient mechanisms:
+${mechBlock || "(none)"}
+${previousBlock}
+${instructions}`;
+}
+```
+
+- [ ] **Step 2: Write the failing test**
+
+`apps/agent/src/nodes/generate-search-strategy.test.ts`:
 
 ```ts
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { searchTrials } from "./search-trials.js";
-import * as ct from "../tools/clinicaltrials.js";
-import type { AgentStateType, } from "../state.js";
-import type { TrialCandidate } from "@clinical-trial-matching/shared";
+import { generateSearchStrategy } from "./generate-search-strategy.js";
+import * as llmModule from "../llm.js";
+import type { AgentStateType } from "../state.js";
 
 afterEach(() => vi.restoreAllMocks());
 
-function tc(overrides: Partial<TrialCandidate> = {}): TrialCandidate {
+function makeState(
+  overrides: Partial<AgentStateType> = {},
+): AgentStateType {
   return {
-    nctId: "NCT00000001",
-    title: "x",
-    conditions: [],
-    interventions: [],
-    status: "RECRUITING",
-    locations: [],
+    patientProfile: {
+      patientId: "p1",
+      conditions: [
+        {
+          code: "44054006",
+          display: "Type 2 diabetes mellitus",
+          clinicalStatus: "active",
+        },
+      ],
+      medications: [],
+      observations: [],
+      demographics: { ageYears: 60, sex: "female" },
+    },
+    mechanisms: [
+      {
+        conditionId: "44054006",
+        conditionName: "Type 2 diabetes mellitus",
+        mondoId: "MONDO:0005148",
+        geneTargets: [{ id: "SLC5A2", name: "SLC5A2", type: "gene_protein" }],
+        pathways: [{ id: "GO:0035623", name: "glucose reabsorption", type: "biological_process" }],
+        supportingPaths: [],
+        rationale: "primary driver",
+      },
+    ],
+    searchStrategy: null,
+    attempts: 0,
     ...overrides,
-  };
-}
-
-function stateWith({
-  strategy,
-  candidates,
-}: {
-  strategy?: AgentStateType["searchStrategy"];
-  candidates?: AgentStateType["repurposingCandidates"];
-} = {}): AgentStateType {
-  return {
-    searchStrategy: strategy ?? null,
-    repurposingCandidates: candidates ?? [],
   } as unknown as AgentStateType;
 }
 
-describe("searchTrials", () => {
-  it("issues a search-strategy query when strategy is present", async () => {
-    const spy = vi.spyOn(ct, "searchClinicalTrials").mockResolvedValue([tc()]);
-    const rawSpy = vi.spyOn(ct, "searchClinicalTrialsRaw").mockResolvedValue([]);
-    const out = await searchTrials(
-      stateWith({ strategy: { conditions: ["T2DM"], interventions: [] } as never }),
-    );
-    expect(spy).toHaveBeenCalledOnce();
-    expect(out.candidates).toHaveLength(1);
-    expect(rawSpy).not.toHaveBeenCalled();
+function mockLlm(strategyPick: unknown): void {
+  vi.spyOn(llmModule, "llm", "get").mockReturnValue({
+    withStructuredOutput: () => ({
+      invoke: async () => strategyPick,
+    }),
+  } as never);
+}
+
+describe("generateSearchStrategy", () => {
+  it("produces a SearchStrategy on first attempt with attempt=1", async () => {
+    mockLlm({
+      queries: ["type 2 diabetes SGLT2", "T2DM glucose reabsorption"],
+      filters: { status: ["RECRUITING"] },
+      broadeningApplied: [],
+    });
+    const out = await generateSearchStrategy(makeState());
+    expect(out.searchStrategy?.queries).toEqual([
+      "type 2 diabetes SGLT2",
+      "T2DM glucose reabsorption",
+    ]);
+    expect(out.searchStrategy?.attempt).toBe(1);
+    expect(out.searchStrategy?.broadeningApplied).toEqual([]);
+    expect(out.attempts).toBe(1);
   });
 
-  it("issues one per-candidate intervention query when no strategy is present", async () => {
-    const stratSpy = vi
-      .spyOn(ct, "searchClinicalTrials")
-      .mockResolvedValue([]);
-    const rawSpy = vi
-      .spyOn(ct, "searchClinicalTrialsRaw")
-      .mockImplementation(async ({ intervention }) => [
-        tc({ nctId: `NCT-${intervention}`, interventions: [intervention!] }),
-      ]);
-    const out = await searchTrials(
-      stateWith({
-        candidates: [
-          {
-            drug: { id: "DB00331", name: "metformin", type: "drug" },
-            originalIndications: ["T2DM"],
-            rationale: "",
-            supportingPaths: [],
-          },
-          {
-            drug: { id: "DB01067", name: "glipizide", type: "drug" },
-            originalIndications: ["T2DM"],
-            rationale: "",
-            supportingPaths: [],
-          },
-        ],
+  it("increments attempt count when a previous strategy exists", async () => {
+    mockLlm({
+      queries: ["diabetes"],
+      filters: {},
+      broadeningApplied: ["dropped phase filter", "generalized SGLT2 → SGLT inhibitor"],
+    });
+    const out = await generateSearchStrategy(
+      makeState({
+        searchStrategy: {
+          queries: ["type 2 diabetes SGLT2 phase 2"],
+          filters: { phase: ["PHASE2"], status: ["RECRUITING"] },
+          attempt: 1,
+          broadeningApplied: [],
+        },
+        attempts: 1,
       }),
     );
-    expect(stratSpy).not.toHaveBeenCalled();
-    expect(rawSpy).toHaveBeenCalledTimes(2);
-    expect(out.candidates?.map((c) => c.nctId).sort()).toEqual([
-      "NCT-glipizide",
-      "NCT-metformin",
-    ]);
+    expect(out.searchStrategy?.attempt).toBe(2);
+    expect(out.searchStrategy?.broadeningApplied).toContain("dropped phase filter");
+    expect(out.attempts).toBe(2);
   });
 
-  it("unions strategy + per-candidate results, deduping by nctId", async () => {
-    vi.spyOn(ct, "searchClinicalTrials").mockResolvedValue([
-      tc({ nctId: "NCT-shared", interventions: ["metformin"] }),
-    ]);
-    vi.spyOn(ct, "searchClinicalTrialsRaw").mockResolvedValue([
-      tc({ nctId: "NCT-shared", interventions: ["metformin"] }),
-      tc({ nctId: "NCT-only-drug", interventions: ["metformin"] }),
-    ]);
-    const out = await searchTrials(
-      stateWith({
-        strategy: { conditions: ["T2DM"], interventions: [] } as never,
-        candidates: [
-          {
-            drug: { id: "DB00331", name: "metformin", type: "drug" },
-            originalIndications: ["T2DM"],
-            rationale: "",
-            supportingPaths: [],
-          },
-        ],
+  it("returns {error} when state.patientProfile is null", async () => {
+    const out = await generateSearchStrategy(
+      makeState({ patientProfile: null }),
+    );
+    expect(out.error).toMatch(/patient profile/);
+    expect(out.searchStrategy).toBeUndefined();
+  });
+
+  it("returns {error} when the LLM throws", async () => {
+    vi.spyOn(llmModule, "llm", "get").mockReturnValue({
+      withStructuredOutput: () => ({
+        invoke: async () => {
+          throw new Error("rate limited");
+        },
       }),
-    );
-    expect(out.candidates?.map((c) => c.nctId).sort()).toEqual([
-      "NCT-only-drug",
-      "NCT-shared",
-    ]);
-  });
-
-  it("returns empty list when nothing is queryable", async () => {
-    const out = await searchTrials(stateWith());
-    expect(out.candidates).toEqual([]);
-  });
-
-  it("propagates a CT.gov error as state.error", async () => {
-    vi.spyOn(ct, "searchClinicalTrials").mockRejectedValue(new Error("boom"));
-    const out = await searchTrials(
-      stateWith({ strategy: { conditions: ["X"], interventions: [] } as never }),
-    );
-    expect(out.error).toMatch(/Failed to search trials.*boom/);
-    expect(out.candidates).toBeUndefined();
+    } as never);
+    const out = await generateSearchStrategy(makeState());
+    expect(out.error).toMatch(/Failed to generate search strategy.*rate limited/);
   });
 });
 ```
 
-- [ ] **Step 2: Run the test to confirm it fails**
+- [ ] **Step 3: Run the test to confirm it fails**
 
-Run: `pnpm --filter agent test src/nodes/search-trials.test.ts`
-Expected: FAIL.
+Run: `pnpm --filter agent test src/nodes/generate-search-strategy.test.ts`
+Expected: FAIL — current stub returns `{searchStrategy: null, attempts: state.attempts + 1}`, doesn't call the LLM.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 4: Write the implementation**
 
-`apps/agent/src/nodes/search-trials.ts`:
+`apps/agent/src/nodes/generate-search-strategy.ts`:
 
 ```ts
 /**
- * # search-trials
+ * # generate-search-strategy
  *
- * Two-channel CT.gov discovery, unioned by nctId.
+ * LLM-driven generation of a `SearchStrategy` from the patient's profile and
+ * identified mechanisms. Produces 1–4 ClinicalTrials.gov full-text queries
+ * plus optional filters. On retries (state.searchStrategy non-null) the
+ * model broadens the previous strategy and records what it changed.
  *
- *   Channel A — search-strategy channel
- *     Driven by `state.searchStrategy`. Conditions + mechanism-derived
- *     keywords go to CT.gov as cond/intr query terms.
+ * Peer to `find-repurposing-candidates` — both run concurrently downstream
+ * of `identify-relevant-mechanisms` and converge at `search-trials`. This
+ * node does not invoke CT.gov; it only produces the query intent.
  *
- *   Channel B — repurposing channel
- *     One CT.gov query per RepurposingCandidate, using the drug name as
- *     `intervention`. Surfaces trials a pure keyword search would miss.
- *
- * Both channels feed into the same downstream pre-filter and trial-eval
- * pipeline. Provenance (which channel found a given trial) is left for the
- * follow-on trial-eval enrichment plan to populate on TrialMatch.
- *
- * Errors: CT.gov is the only external boundary. Either channel failing
- * aborts the node with state.error rather than returning a partial result —
- * a partial trial list would silently bias rank-and-synthesize.
+ * Error model:
+ *   - state.patientProfile null              → {error}
+ *   - LLM API failure / structured-output
+ *     validation failure                     → {error: "Failed to generate
+ *                                                       search strategy: ..."}
  */
 
-import type { AgentStateType } from "../state.js";
-import type { TrialCandidate } from "@clinical-trial-matching/shared";
+import type {
+  SearchStrategy,
+} from "@clinical-trial-matching/shared";
 
+import { llm } from "../llm.js";
 import {
-  searchClinicalTrials,
-  searchClinicalTrialsRaw,
-} from "../tools/clinicaltrials.js";
+  SearchStrategyPickSchema,
+  searchStrategyPrompt,
+} from "../prompts/search-strategy.js";
+import type { AgentStateType } from "../state.js";
 import { errorMessage } from "../util/error.js";
 
-export async function searchTrials(
+export async function generateSearchStrategy(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
-  const strategy = state.searchStrategy;
-  const candidates = state.repurposingCandidates ?? [];
-
-  if (!strategy && candidates.length === 0) {
-    return { candidates: [] };
+  const profile = state.patientProfile;
+  if (!profile) {
+    return { error: "generate-search-strategy: no patient profile available" };
   }
 
+  const nextAttempt = (state.searchStrategy?.attempt ?? 0) + 1;
+
   try {
-    const queries: Promise<TrialCandidate[]>[] = [];
-    if (strategy) {
-      queries.push(searchClinicalTrials(strategy));
-    }
-    for (const c of candidates) {
-      queries.push(
-        searchClinicalTrialsRaw({ intervention: c.drug.name }),
-      );
-    }
-    const results = await Promise.all(queries);
+    const structured = llm.withStructuredOutput(SearchStrategyPickSchema);
+    const prompt = searchStrategyPrompt(profile, state.mechanisms, state.searchStrategy);
+    const pick = await structured.invoke(prompt);
 
-    const byNct = new Map<string, TrialCandidate>();
-    for (const batch of results) {
-      for (const t of batch) {
-        // Dedup on nctId; first occurrence wins (strategy results come first).
-        if (!byNct.has(t.nctId)) byNct.set(t.nctId, t);
-      }
-    }
+    const strategy: SearchStrategy = {
+      queries: pick.queries,
+      filters: pick.filters,
+      attempt: nextAttempt,
+      broadeningApplied: pick.broadeningApplied,
+    };
 
-    return { candidates: [...byNct.values()] };
+    return {
+      searchStrategy: strategy,
+      attempts: state.attempts + 1,
+    };
   } catch (err) {
-    return { error: `Failed to search trials: ${errorMessage(err)}` };
+    return {
+      error: `Failed to generate search strategy: ${errorMessage(err)}`,
+    };
   }
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [ ] **Step 5: Run the test**
 
-Run: `pnpm --filter agent test src/nodes/search-trials.test.ts`
-Expected: PASS, 5 tests.
+Run: `pnpm --filter agent test src/nodes/generate-search-strategy.test.ts`
+Expected: PASS, 4 tests.
 
-- [ ] **Step 5: Run all agent tests**
+- [ ] **Step 6: Run all agent tests**
 
 Run: `pnpm --filter agent test`
 Expected: ALL PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
-git add apps/agent/src/nodes/search-trials.ts apps/agent/src/nodes/search-trials.test.ts
-git commit -m "Implement search-trials: union search-strategy + repurposing channels"
+git add apps/agent/src/prompts/search-strategy.ts apps/agent/src/nodes/generate-search-strategy.ts apps/agent/src/nodes/generate-search-strategy.test.ts
+git commit -m "Implement generate-search-strategy with structured-output LLM call"
 ```
 
 ---
 
-## Task 6: Wire up the build script command
+## Task 5: Wire up the build script command
 
 **Files:**
 - Modify: `package.json` (repo root)
-- Create: `scripts/build-txgnn-data.ts` (skeleton — implementation in Task 7)
+- Create: `scripts/build-txgnn-data.ts` (skeleton — implementation in Task 6)
 
 We add the pnpm command first as a separate step so the next task can be done in a clean commit. The skeleton script just logs "not yet implemented" so the command exists and is discoverable.
 
@@ -1371,7 +1224,7 @@ git commit -m "Add kg:build-txgnn pnpm script skeleton"
 
 ---
 
-## Task 7: Implement the build script
+## Task 6: Implement the build script
 
 **Why this is its own task:** the script's input parsing depends on Task 0's findings. Doing it last lets every other task land independently of the dump format and means the runtime is fully tested and committed *before* you wrestle with the raw dump's shape.
 
@@ -1473,7 +1326,7 @@ Expected: FAIL — `filterAndShape` is not exported.
 
 - [ ] **Step 4: Implement the script**
 
-`scripts/build-txgnn-data.ts` (replace the skeleton from Task 6):
+`scripts/build-txgnn-data.ts` (replace the skeleton from Task 5):
 
 ```ts
 #!/usr/bin/env tsx
@@ -1746,14 +1599,16 @@ Expected: PASS.
 Run: `pnpm kg:build-txgnn --help 2>&1 | head` (the script ignores the flag, but the command exists)
 Expected: the script runs (or exits with the dump-not-found error from `parsePredictionsDump` if the dump isn't downloaded — that's acceptable; the command is wired).
 
-- [ ] **Confirm the spec's "in scope" boxes are checked**
+- [ ] **Confirm what this plan covers vs. defers**
 
-Re-read `docs/superpowers/specs/2026-05-21-drug-eval-subgraph-design.md` "Scope" section. The following bullets must be done after this plan:
+After this plan, `identify-relevant-mechanisms`'s two downstream peers are both populated:
 
-- ✅ Full rewrite of `find-repurposing-candidates.ts` using TxGNN predictions
-- ✅ `search-trials` implementation: consumes both `state.searchStrategy` and `state.repurposingCandidates`, unions+dedupes by `nctId`
+- ✅ Full rewrite of `find-repurposing-candidates.ts` using TxGNN predictions (spec scope bullet 1)
+- ✅ `generate-search-strategy` implemented with structured-output LLM call (peer feeder, dependency pulled into this plan)
 
-These three remain for follow-on plans (and require baseline implementations of the corresponding stubs):
+Deferred to follow-on plans:
+
+- ⏭️ `search-trials` implementation + `tools/clinicaltrials.ts` CT.gov API integration (spec scope bullet 2). Note for the implementer: when picking this up, fix the `SearchStrategy` field references — `strategy.queries` and `strategy.filters` are the actual shape (`packages/shared/src/search.ts:10`), not `strategy.conditions`/`strategy.interventions`.
 
 - ⏭️ `trial-eval-subgraph` enrichment (populate `TrialMatch.repurposingRationale`, pass `supportingPaths` into `mechanism-plausibility`)
 - ⏭️ New eligibility sub-check (intervention contraindication Cypher in `eligibility-check`)
