@@ -183,6 +183,7 @@ export async function buildCandidateMechanisms(
       const mechanism: CandidateMechanism = {
         conditionId: cond.snomedCode,
         conditionName: cond.conditionDisplay,
+        mondoId: disease.mondoId,
         geneTargets,
         pathways,
         supportingPaths,

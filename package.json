@@ -17,6 +17,7 @@
     "kg:build-subset": "tsx scripts/build-primekg-subset.ts",
     "kg:load": "./scripts/load-primekg-to-neo4j.sh",
     "kg:build-crosswalk": "tsx scripts/build-mondo-crosswalk.ts",
+    "kg:build-txgnn": "tsx scripts/build-txgnn-data.ts",
     "test:scripts": "vitest run scripts/"
   },
   "devDependencies": {

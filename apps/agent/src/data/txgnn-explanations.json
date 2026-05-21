@@ -1,0 +1,166 @@
+{
+  "MONDO:0005148::DB06292": {
+    "nodes": [
+      {
+        "id": "DB06292",
+        "name": "dapagliflozin",
+        "type": "drug"
+      },
+      {
+        "id": "SLC5A2",
+        "name": "SLC5A2",
+        "type": "gene_protein"
+      },
+      {
+        "id": "GO:0035623",
+        "name": "glucose reabsorption",
+        "type": "biological_process"
+      },
+      {
+        "id": "MONDO:0005148",
+        "name": "type 2 diabetes mellitus",
+        "type": "disease"
+      }
+    ],
+    "edges": [
+      {
+        "source": "DB06292",
+        "target": "SLC5A2",
+        "relation": "target"
+      },
+      {
+        "source": "SLC5A2",
+        "target": "GO:0035623",
+        "relation": "interacts with"
+      },
+      {
+        "source": "GO:0035623",
+        "target": "MONDO:0005148",
+        "relation": "associated with"
+      }
+    ]
+  },
+  "MONDO:0005233::DB09330": {
+    "nodes": [
+      {
+        "id": "DB09330",
+        "name": "osimertinib",
+        "type": "drug"
+      },
+      {
+        "id": "EGFR",
+        "name": "EGFR",
+        "type": "gene_protein"
+      },
+      {
+        "id": "GO:0038127",
+        "name": "ERBB signaling pathway",
+        "type": "biological_process"
+      },
+      {
+        "id": "MONDO:0005233",
+        "name": "non-small cell lung carcinoma",
+        "type": "disease"
+      }
+    ],
+    "edges": [
+      {
+        "source": "DB09330",
+        "target": "EGFR",
+        "relation": "target"
+      },
+      {
+        "source": "EGFR",
+        "target": "GO:0038127",
+        "relation": "interacts with"
+      },
+      {
+        "source": "GO:0038127",
+        "target": "MONDO:0005233",
+        "relation": "associated with"
+      }
+    ]
+  },
+  "MONDO:0007254::DB00072": {
+    "nodes": [
+      {
+        "id": "DB00072",
+        "name": "trastuzumab",
+        "type": "drug"
+      },
+      {
+        "id": "ERBB2",
+        "name": "ERBB2",
+        "type": "gene_protein"
+      },
+      {
+        "id": "GO:0038127",
+        "name": "ERBB signaling pathway",
+        "type": "biological_process"
+      },
+      {
+        "id": "MONDO:0007254",
+        "name": "breast cancer",
+        "type": "disease"
+      }
+    ],
+    "edges": [
+      {
+        "source": "DB00072",
+        "target": "ERBB2",
+        "relation": "target"
+      },
+      {
+        "source": "ERBB2",
+        "target": "GO:0038127",
+        "relation": "interacts with"
+      },
+      {
+        "source": "GO:0038127",
+        "target": "MONDO:0007254",
+        "relation": "associated with"
+      }
+    ]
+  },
+  "MONDO:0008383::DB00563": {
+    "nodes": [
+      {
+        "id": "DB00563",
+        "name": "methotrexate",
+        "type": "drug"
+      },
+      {
+        "id": "DHFR",
+        "name": "DHFR",
+        "type": "gene_protein"
+      },
+      {
+        "id": "GO:0046655",
+        "name": "folate metabolism",
+        "type": "biological_process"
+      },
+      {
+        "id": "MONDO:0008383",
+        "name": "rheumatoid arthritis",
+        "type": "disease"
+      }
+    ],
+    "edges": [
+      {
+        "source": "DB00563",
+        "target": "DHFR",
+        "relation": "target"
+      },
+      {
+        "source": "DHFR",
+        "target": "GO:0046655",
+        "relation": "interacts with"
+      },
+      {
+        "source": "GO:0046655",
+        "target": "MONDO:0008383",
+        "relation": "associated with"
+      }
+    ]
+  }
+}

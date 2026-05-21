@@ -39,6 +39,7 @@ const CANDIDATES: CandidateMechanism[] = [
   {
     conditionId: "254837009",
     conditionName: "Malignant tumor of breast",
+    mondoId: "MONDO:0007254",
     geneTargets: [
       { id: "1", name: "BRCA1", type: "gene_protein" },
       { id: "2", name: "BRCA2", type: "gene_protein" },
@@ -53,6 +54,7 @@ const CANDIDATES: CandidateMechanism[] = [
   {
     conditionId: "59621000",
     conditionName: "Hypertension",
+    mondoId: "MONDO:0001134",
     geneTargets: [{ id: "10", name: "AGT", type: "gene_protein" }],
     pathways: [
       { id: "P10", name: "blood pressure regulation", type: "biological_process" },
