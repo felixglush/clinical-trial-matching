@@ -1,3 +1,10 @@
+// PrimeKG (Neo4j) query helpers.
+//
+// Read docs/primekg-querying.md before adding new queries — it documents
+// the gene/protein-with-a-slash node type, the undirected-edge
+// `DISTINCT` requirement, the FLOAT/INT trap on LIMIT params, and the
+// MONDO_grouped multi-id shape that the crosswalk depends on.
+
 import neo4j, { type Driver, type Session } from "neo4j-driver";
 import type {
   KGEdge,
