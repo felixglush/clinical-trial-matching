@@ -3,7 +3,7 @@ import { PatientProfileSchema } from "./patient";
 import { MechanismDropSchema, MechanismSchema } from "./mechanism";
 import { RepurposingCandidateSchema } from "./repurposing";
 import { SearchStrategySchema } from "./search";
-import { TrialCandidateSchema, TrialMatchSchema } from "./trial";
+import { CandidateDropSchema, TrialCandidateSchema, TrialMatchSchema } from "./trial";
 import { ApprovalRequestSchema } from "./run";
 
 // Canonical shape of the agent's run state — both the source of truth for
@@ -19,6 +19,7 @@ export const GraphStateSchema = z.object({
   repurposingCandidates: z.array(RepurposingCandidateSchema),
   searchStrategy: SearchStrategySchema.nullable(),
   candidates: z.array(TrialCandidateSchema),
+  candidateDrops: z.array(CandidateDropSchema),  // NEW
   matches: z.array(TrialMatchSchema),
   attempts: z.number().int().nonnegative(),
   approvalRequest: ApprovalRequestSchema.nullable(),
