@@ -1,6 +1,7 @@
 import { Annotation } from "@langchain/langgraph";
 import type {
   ApprovalRequest,
+  CandidateDrop,
   GraphState,
   Mechanism,
   MechanismDrop,
@@ -37,6 +38,10 @@ export const AgentState = Annotation.Root({
     default: () => null,
   }),
   candidates: Annotation<TrialCandidate[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  candidateDrops: Annotation<CandidateDrop[]>({
     reducer: (_prev, next) => next,
     default: () => [],
   }),

@@ -719,6 +719,7 @@ function emptyState() {
     repurposingCandidates: [],
     searchStrategy: null,
     candidates: [],
+    candidateDrops: [],
     matches: [],
     attempts: 0,
     approvalRequest: null,
