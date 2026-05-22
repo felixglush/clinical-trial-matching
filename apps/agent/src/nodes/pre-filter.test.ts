@@ -229,6 +229,7 @@ describe("preFilter", () => {
       candidate({ nctId: `NCT_${i}` }),
     );
     await preFilter(makeState({ candidates }));
+    expect(maxInFlight).toBeGreaterThan(1);
     expect(maxInFlight).toBeLessThanOrEqual(10);
   });
 });
