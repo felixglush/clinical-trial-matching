@@ -57,7 +57,7 @@ describe("searchClinicalTrials", () => {
     expect(url.searchParams.get("query.term")).toBeNull();
   });
 
-  it("pipe-joins status and phase filters", async () => {
+  it("pipe-joins status filter and maps single phase via filter.advanced", async () => {
     const spy = vi.spyOn(global, "fetch").mockResolvedValue(makeResponse({ studies: [] }));
     await searchClinicalTrials({
       term: "x",
@@ -65,7 +65,18 @@ describe("searchClinicalTrials", () => {
     });
     const url = new URL(spy.mock.calls[0]![0] as string);
     expect(url.searchParams.get("filter.overallStatus")).toBe("RECRUITING|NOT_YET_RECRUITING");
-    expect(url.searchParams.get("filter.phase")).toBe("PHASE2");
+    expect(url.searchParams.get("filter.advanced")).toBe("AREA[Phase]PHASE2");
+    expect(url.searchParams.get("filter.phase")).toBeNull();
+  });
+
+  it("maps multiple phases via filter.advanced with OR", async () => {
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue(makeResponse({ studies: [] }));
+    await searchClinicalTrials({
+      term: "x",
+      filters: { phase: ["PHASE2", "PHASE3"] },
+    });
+    const url = new URL(spy.mock.calls[0]![0] as string);
+    expect(url.searchParams.get("filter.advanced")).toBe("AREA[Phase](PHASE2 OR PHASE3)");
   });
 
   it("defaults pageSize to 50", async () => {

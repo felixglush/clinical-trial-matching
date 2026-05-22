@@ -85,7 +85,14 @@ function buildUrl(q: CtgQuery): string {
     params.set("filter.overallStatus", q.filters.status.join("|"));
   }
   if (q.filters?.phase && q.filters.phase.length > 0) {
-    params.set("filter.phase", q.filters.phase.join("|"));
+    // CT.gov v2 has no `filter.phase` — phase is filtered via the
+    // `filter.advanced` Essie expression. One phase: `AREA[Phase]PHASE2`;
+    // multiple: `AREA[Phase](PHASE2 OR PHASE3)`.
+    const phaseExpr =
+      q.filters.phase.length === 1
+        ? `AREA[Phase]${q.filters.phase[0]}`
+        : `AREA[Phase](${q.filters.phase.join(" OR ")})`;
+    params.set("filter.advanced", phaseExpr);
   }
   if (q.filters?.country) params.set("query.locn", q.filters.country);
   params.set("pageSize", String(q.pageSize ?? DEFAULT_PAGE_SIZE));
