@@ -46,6 +46,7 @@ The graph is defined in [apps/agent/src/graph.ts](../apps/agent/src/graph.ts). S
 | `repurposingCandidates` | `RepurposingCandidate[]` | replace | find-repurposing-candidates | search-trials, trial-eval |
 | `searchStrategy` | `SearchStrategy \| null` | replace | generate-search-strategy | search-trials, generate-search-strategy (for broadening) |
 | `candidates` | `TrialCandidate[]` | replace | search-trials, pre-filter | pre-filter, routeAfterPreFilter, fan-out |
+| `candidateDrops` | `CandidateDrop[]` | replace | pre-filter | UI (audit display) |
 | `matches` | `TrialMatch[]` | **concat** | trial-eval-subgraph (via Send) | rank-and-synthesize |
 | `attempts` | `number` | replace | generate-search-strategy (increment) | routeAfterPreFilter (cap at 3) |
 | `approvalRequest` | `ApprovalRequest \| null` | replace | rank-and-synthesize | human-approval |
@@ -104,7 +105,7 @@ Does **not** include repurposing drug names; those are queried separately by `se
 ### `search-trials`
 
 **Reads:** `searchStrategy`, `repurposingCandidates`
-**Writes:** `candidates`
+**Writes:** `candidates` (with `discoveredVia` and `repurposingDrugIds` provenance attached)
 **Tools:** `clinicaltrials.searchClinicalTrials(strategy)` — clinicaltrials.gov v2 REST API
 
 Issues **two queries** against CT.gov and unions the results (deduped by `nctId`):
@@ -113,14 +114,22 @@ Issues **two queries** against CT.gov and unions the results (deduped by `nctId`
 
 Returns raw `TrialCandidate[]` (the unstructured eligibility text and structured metadata).
 
+Each candidate carries provenance: `discoveredVia: ("strategy"|"repurposing")[]` and `repurposingDrugIds: string[]`. Strategy-only hits have `discoveredVia: ["strategy"]` and `repurposingDrugIds: []`. Repurposing channel hits carry the source `drug.id` values from `state.repurposingCandidates`; trials surfaced by both channels carry both labels. CT.gov calls retry on 429/503 with exponential backoff inside `tools/clinicaltrials.ts`; per-call failures are warn-logged and don't kill the channel.
+
 ### `pre-filter`
 
 **Reads:** `patientProfile`, `candidates`
-**Writes:** `candidates` (filtered subset)
-**Prompt:** `preFilterPrompt(profile, candidate)`
-**LLM call:** Yes, but a cheap one per candidate.
+**Writes:** `candidates` (survivors), `candidateDrops` (audit trail)
+**Prompt:** `preFilterPrompt(profile, candidate)` (Stage 2 only)
+**LLM call:** Yes — per Stage-1 survivor, bounded concurrency 10.
 
-Drops obvious non-matches with a fast LLM-as-judge — e.g., wrong age range, completed-not-recruiting status, geographic ineligibility. Goal: cut the candidate list from ~50–200 down to ~10–30 before the expensive per-trial evaluation.
+Two-stage filter that cuts the candidate list from ~50–200 down to ~10–30 before the expensive `trial-eval` fan-out.
+
+Stage 1 — deterministic gates (no LLM): drops on non-enrolling status, age outside the trial's `minimumAge`/`maximumAge` window, sex mismatch, or patient deceased.
+
+Stage 2 — LLM-as-judge (Haiku, structured output): per Stage-1 survivor, the model returns `{keep, reason}`. The prompt instructs the model to keep when in doubt — false-negatives here are expensive (the trial vanishes from the run), false-positives are cheap (the downstream `trial-eval` eligibility node will catch them).
+
+Every drop — Stage 1 or Stage 2 — produces an entry in `state.candidateDrops` with `{nctId, title, reason, stage, detail}` for audit display. LLM call failures are treated as keep (lenient) and do not produce a drop entry.
 
 ### `routeAfterPreFilter` (routing function, not a node)
 
