@@ -20,25 +20,25 @@ describe("searchClinicalTrials", () => {
   it("maps a v2 study payload into a TrialCandidate", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(makeResponse(fixture));
     const [t] = await searchClinicalTrials({ term: "type 2 diabetes" });
-    expect(t.nctId).toBe("NCT00000001");
-    expect(t.title).toBe("A Study of Drug X in Type 2 Diabetes");
-    expect(t.status).toBe("RECRUITING");
-    expect(t.phase).toBe("PHASE2");
-    expect(t.conditions).toEqual(["Type 2 Diabetes Mellitus"]);
-    expect(t.interventions).toEqual(["Drug X", "Metformin"]);
-    expect(t.minimumAge).toBe("18 Years");
-    expect(t.maximumAge).toBe("75 Years");
-    expect(t.sexEligibility).toBe("ALL");
-    expect(t.eligibilityCriteriaText).toContain("Inclusion: adults");
-    expect(t.locations).toHaveLength(1);
-    expect(t.locations[0]!.city).toBe("Boston");
+    expect(t!.nctId).toBe("NCT00000001");
+    expect(t!.title).toBe("A Study of Drug X in Type 2 Diabetes");
+    expect(t!.status).toBe("RECRUITING");
+    expect(t!.phase).toBe("PHASE2");
+    expect(t!.conditions).toEqual(["Type 2 Diabetes Mellitus"]);
+    expect(t!.interventions).toEqual(["Drug X", "Metformin"]);
+    expect(t!.minimumAge).toBe("18 Years");
+    expect(t!.maximumAge).toBe("75 Years");
+    expect(t!.sexEligibility).toBe("ALL");
+    expect(t!.eligibilityCriteriaText).toContain("Inclusion: adults");
+    expect(t!.locations).toHaveLength(1);
+    expect(t!.locations[0]!.city).toBe("Boston");
   });
 
   it("does not populate discoveredVia or repurposingDrugIds (caller does)", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue(makeResponse(fixture));
     const [t] = await searchClinicalTrials({ term: "x" });
-    expect((t as Partial<typeof t>).discoveredVia).toBeUndefined();
-    expect((t as Partial<typeof t>).repurposingDrugIds).toBeUndefined();
+    expect(t!.discoveredVia).toBeUndefined();
+    expect(t!.repurposingDrugIds).toBeUndefined();
   });
 
   it("sends query.term for a term query", async () => {
