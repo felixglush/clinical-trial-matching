@@ -22,13 +22,13 @@ export const TrialCandidateSchema = z.object({
   status: z.string(),
   eligibilityCriteriaText: z.string().optional(),
   locations: z.array(TrialLocationSchema),
-  // NEW: structured eligibility fields used by pre-filter Stage 1.
+  // Structured eligibility fields used by pre-filter Stage 1.
   minimumAge: z.string().optional(),      // CT.gov format: "18 Years"
   maximumAge: z.string().optional(),
   sexEligibility: z.enum(["ALL", "MALE", "FEMALE"]).optional(),
-  // NEW: provenance. Every candidate is discovered via at least one
-  // channel. `repurposingDrugIds` is empty when only the strategy channel
-  // surfaced the trial; otherwise contains the `drug.id` values from
+  // Provenance. Every candidate is discovered via at least one channel.
+  // `repurposingDrugIds` is empty when only the strategy channel surfaced
+  // the trial; otherwise contains the `drug.id` values from
   // `state.repurposingCandidates` that produced the hit.
   discoveredVia: z.array(z.enum(["strategy", "repurposing"])).nonempty(),
   repurposingDrugIds: z.array(z.string()),

@@ -22,6 +22,7 @@ import { z } from "zod";
 
 import {
   isActiveCondition,
+  isActiveMedication,
   type PatientProfile,
   type TrialCandidate,
 } from "@clinical-trial-matching/shared";
@@ -32,7 +33,6 @@ export const PreFilterJudgmentSchema = z.object({
   keep: z.boolean(),
   reason: z.string(),
 });
-export type PreFilterJudgment = z.infer<typeof PreFilterJudgmentSchema>;
 
 export function preFilterPrompt(
   profile: PatientProfile,
@@ -43,7 +43,7 @@ export function preFilterPrompt(
     .map((c) => c.display)
     .join(", ");
   const meds = profile.medications
-    .filter((m) => m.events.some((e) => e.status === "active" || e.status === "in-progress"))
+    .filter(isActiveMedication)
     .map((m) => m.display)
     .join(", ");
   const priorTx = profile.priorTreatments.map((p) => p.display).join(", ");

@@ -19,7 +19,7 @@ export const GraphStateSchema = z.object({
   repurposingCandidates: z.array(RepurposingCandidateSchema),
   searchStrategy: SearchStrategySchema.nullable(),
   candidates: z.array(TrialCandidateSchema),
-  candidateDrops: z.array(CandidateDropSchema),  // NEW
+  candidateDrops: z.array(CandidateDropSchema),
   matches: z.array(TrialMatchSchema),
   attempts: z.number().int().nonnegative(),
   approvalRequest: ApprovalRequestSchema.nullable(),

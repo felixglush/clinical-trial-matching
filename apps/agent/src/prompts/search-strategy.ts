@@ -39,6 +39,7 @@ import { z } from "zod";
 
 import {
   isActiveCondition,
+  isActiveMedication,
   SearchFiltersSchema,
   type Mechanism,
   type PatientProfile,
@@ -123,7 +124,7 @@ export function searchStrategyPrompt(
   // history, surfaced via priorTreatments. We render display only — the LLM
   // doesn't need RxNorm to reason about line of therapy.
   const activeMeds = profile.medications
-    .filter((m) => m.events.some((e) => e.status === "active" || e.status === "in-progress"))
+    .filter(isActiveMedication)
     .map((m) => `- ${m.display}`)
     .join("\n");
 

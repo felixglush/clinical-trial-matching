@@ -56,6 +56,10 @@ import { isEnrollingStatus, parseAgeYears } from "../util/ctgov.js";
 
 const STAGE2_CONCURRENCY = 10;
 
+// Hoisted once per module load — constructing a new chain per candidate
+// inside the hot loop is redundant since the schema never changes.
+const stage2Judge = llm.withStructuredOutput(PreFilterJudgmentSchema);
+
 export async function preFilter(
   state: AgentStateType,
 ): Promise<Partial<AgentStateType>> {
@@ -150,8 +154,7 @@ async function judgeStage2(
   profile: PatientProfile,
 ): Promise<{ keep: boolean; reason: string } | null> {
   try {
-    const structured = llm.withStructuredOutput(PreFilterJudgmentSchema);
-    return await structured.invoke(preFilterPrompt(profile, c));
+    return await stage2Judge.invoke(preFilterPrompt(profile, c));
   } catch (err) {
     console.warn(
       `pre-filter: stage 2 LLM failed for ${c.nctId}: ${errorMessage(err)} (keeping)`,
