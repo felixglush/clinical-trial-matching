@@ -81,8 +81,10 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
 describe("literatureSupport", () => {
   it("attempt 0 query includes drug AND condition AND mechanism keyword", async () => {
     const spy = vi.spyOn(pubmed, "searchPubMed").mockResolvedValue([]);
+    vi.spyOn(pubmed, "fetchAbstracts").mockResolvedValue(new Map());
     await literatureSupport(state());
-    expect(spy).toHaveBeenCalledTimes(1);
+    // Attempt 0 issues a supporting query (call 0) and a counter-evidence
+    // query (call 1). The supporting query is asserted here.
     const query = spy.mock.calls[0]![0];
     expect(query).toContain("metformin");
     expect(query).toContain("type 2 diabetes");
@@ -143,5 +145,82 @@ describe("literatureSupport", () => {
     expect(q).toContain("drugC");
     expect(q).not.toContain("drugD");
     expect(q).not.toContain("drugE");
+  });
+});
+
+describe("literatureSupport — abstracts + pubtype", () => {
+  it("calls fetchAbstracts for the supporting-query results and merges into citations", async () => {
+    vi.spyOn(pubmed, "searchPubMed").mockResolvedValue([
+      { pmid: "A", title: "tA", url: "u", pubtype: ["Review"] },
+      { pmid: "B", title: "tB", url: "u", pubtype: [] },
+    ]);
+    vi.spyOn(pubmed, "fetchAbstracts").mockResolvedValue(
+      new Map([["A", "Abstract for A."]]),
+    );
+    const out = await literatureSupport(state());
+    const a = out.literatureSupport!.find((c) => c.pmid === "A")!;
+    const b = out.literatureSupport!.find((c) => c.pmid === "B")!;
+    expect(a.abstractExcerpt).toBe("Abstract for A.");
+    expect(b.abstractExcerpt).toBeUndefined();
+  });
+
+  it("soft-fails when fetchAbstracts throws (citations keep abstractExcerpt undefined)", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(pubmed, "searchPubMed").mockResolvedValue([
+      { pmid: "A", title: "tA", url: "u", pubtype: [] },
+    ]);
+    vi.spyOn(pubmed, "fetchAbstracts").mockRejectedValue(new Error("EFetch down"));
+    const out = await literatureSupport(state());
+    expect(out.literatureSupport![0]!.abstractExcerpt).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
+describe("literatureSupport — counter-evidence", () => {
+  it("issues a second PubMed query with counter-evidence terms ANDed", async () => {
+    const searchSpy = vi.spyOn(pubmed, "searchPubMed").mockResolvedValue([]);
+    vi.spyOn(pubmed, "fetchAbstracts").mockResolvedValue(new Map());
+    await literatureSupport(state());
+    expect(searchSpy).toHaveBeenCalledTimes(2);
+    const counterQuery = searchSpy.mock.calls[1]![0];
+    expect(counterQuery).toMatch(/metformin/);
+    expect(counterQuery).toMatch(/type 2 diabetes/);
+    expect(counterQuery).toMatch(/failed|discontinued|futility|toxicity|negative|withdrawn|no benefit/);
+  });
+
+  it("writes counter-evidence to state.counterEvidence (separate from literatureSupport)", async () => {
+    const supportingHits = [{ pmid: "S1", title: "supporting", url: "u", pubtype: [] }];
+    const counterHits = [{ pmid: "C1", title: "failed trial", url: "u", pubtype: [] }];
+    vi.spyOn(pubmed, "searchPubMed").mockImplementation(async (q) =>
+      /failed|discontinued|futility|toxicity|negative|withdrawn|no benefit/.test(q)
+        ? counterHits
+        : supportingHits,
+    );
+    vi.spyOn(pubmed, "fetchAbstracts").mockResolvedValue(new Map());
+    const out = await literatureSupport(state());
+    expect(out.literatureSupport!.map((c) => c.pmid)).toEqual(["S1"]);
+    expect(out.counterEvidence!.map((c) => c.pmid)).toEqual(["C1"]);
+  });
+
+  it("does NOT run a second counter-evidence query on attempt 1 (broaden only applies to supporting)", async () => {
+    const searchSpy = vi.spyOn(pubmed, "searchPubMed").mockResolvedValue([]);
+    vi.spyOn(pubmed, "fetchAbstracts").mockResolvedValue(new Map());
+    await literatureSupport(state({ evidenceAttempts: 1 }));
+    expect(searchSpy).toHaveBeenCalledTimes(1);  // supporting only on broaden
+  });
+
+  it("soft-fails when counter-evidence query throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(pubmed, "searchPubMed").mockImplementation(async (q) =>
+      /failed|discontinued/.test(q)
+        ? Promise.reject(new Error("PubMed down"))
+        : [],
+    );
+    vi.spyOn(pubmed, "fetchAbstracts").mockResolvedValue(new Map());
+    const out = await literatureSupport(state());
+    expect(out.counterEvidence).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

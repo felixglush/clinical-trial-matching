@@ -3,47 +3,103 @@
  *
  * PubMed citation lookup for a trial-patient match. Two-attempt loop
  * (bounded by `decide-if-more-evidence`): attempt 0 includes the
- * mechanism keyword; attempt 1 drops it (broaden). Citations are merged
- * with prior attempts (dedupe by pmid) so the broaden never reduces the
- * citation set.
+ * mechanism keyword and additionally issues a counter-evidence query;
+ * attempt 1 drops the mechanism keyword (broaden) and skips the
+ * counter-evidence query. Citations are merged with prior attempts
+ * (dedupe by pmid) so the broaden never reduces the citation set.
  *
- * No LLM call in this node. Pure PubMed retrieval; synthesize-match
- * consumes the citation list.
+ * After each search we enrich citations with abstract excerpts via
+ * `fetchAbstracts`. Both the PubMed search and the abstract fetch
+ * soft-fail: a network error logs a warning and keeps the prior state.
+ *
+ * No LLM call in this node. Pure PubMed retrieval; mechanism-plausibility
+ * and synthesize-match consume the citation lists.
  */
 
 import type { Citation } from "@clinical-trial-matching/shared";
 
-import { searchPubMed } from "../../../tools/pubmed.js";
+import { fetchAbstracts, searchPubMed } from "../../../tools/pubmed.js";
 import type { TrialEvalStateType } from "../state.js";
 import { errorMessage } from "../../../util/error.js";
 
 const MAX_INTERVENTIONS_IN_QUERY = 3;
-const MAX_RESULTS = 10;
+const SUPPORTING_MAX_RESULTS = 10;
+const COUNTER_MAX_RESULTS = 5;
+
+const COUNTER_TERMS = [
+  "failed",
+  "no benefit",
+  "discontinued",
+  "futility",
+  "toxicity",
+  "negative",
+  "withdrawn",
+] as const;
 
 export async function literatureSupport(
   state: TrialEvalStateType,
 ): Promise<Partial<TrialEvalStateType>> {
-  const query = buildQuery(state);
-  let fetched: Citation[] = [];
-  try {
-    fetched = await searchPubMed(query, MAX_RESULTS);
-  } catch (err) {
-    console.warn(
-      `literature-support: PubMed failed (${state.candidate.nctId}): ${errorMessage(err)} (keeping prior citations)`,
-    );
-    return {
-      literatureSupport: state.literatureSupport,
-      evidenceAttempts: state.evidenceAttempts + 1,
-    };
+  const supportingQuery = buildSupportingQuery(state);
+  const counterQuery =
+    state.evidenceAttempts === 0 ? buildCounterQuery(state) : null;
+
+  // Supporting search (always); counter-evidence search only on first attempt.
+  const tasks: Array<Promise<Citation[] | null>> = [
+    safeSearch(supportingQuery, SUPPORTING_MAX_RESULTS, "supporting"),
+  ];
+  if (counterQuery) {
+    tasks.push(safeSearch(counterQuery, COUNTER_MAX_RESULTS, "counter"));
+  }
+  const [supportingResult, counterResult] = await Promise.all(tasks);
+
+  let supporting = state.literatureSupport;
+  if (supportingResult) {
+    const enriched = await enrichWithAbstracts(supportingResult);
+    supporting = mergeByPmid(state.literatureSupport, enriched);
+  }
+
+  let counterEvidence: Citation[] = state.counterEvidence ?? [];
+  if (counterResult) {
+    counterEvidence = await enrichWithAbstracts(counterResult);
   }
 
   return {
-    literatureSupport: mergeByPmid(state.literatureSupport, fetched),
+    literatureSupport: supporting,
+    counterEvidence,
     evidenceAttempts: state.evidenceAttempts + 1,
   };
 }
 
-function buildQuery(state: TrialEvalStateType): string {
+async function safeSearch(
+  query: string,
+  max: number,
+  label: string,
+): Promise<Citation[] | null> {
+  try {
+    return await searchPubMed(query, max);
+  } catch (err) {
+    console.warn(
+      `literature-support (${label}): searchPubMed failed: ${errorMessage(err)}`,
+    );
+    return null;
+  }
+}
+
+async function enrichWithAbstracts(cits: Citation[]): Promise<Citation[]> {
+  if (cits.length === 0) return cits;
+  try {
+    const abstractMap = await fetchAbstracts(cits.map((c) => c.pmid));
+    return cits.map((c) => {
+      const abs = abstractMap.get(c.pmid);
+      return abs ? { ...c, abstractExcerpt: abs } : c;
+    });
+  } catch (err) {
+    console.warn(`literature-support: fetchAbstracts failed: ${errorMessage(err)}`);
+    return cits;
+  }
+}
+
+function buildSupportingQuery(state: TrialEvalStateType): string {
   const drugs = state.candidate.interventions
     .slice(0, MAX_INTERVENTIONS_IN_QUERY)
     .map((d) => `"${d}"`)
@@ -63,6 +119,23 @@ function buildQuery(state: TrialEvalStateType): string {
   if (drugs) parts.push(`(${drugs})`);
   if (condition) parts.push(`"${condition}"`);
   if (mechanismKw) parts.push(`"${mechanismKw}"`);
+  return parts.join(" AND ");
+}
+
+function buildCounterQuery(state: TrialEvalStateType): string {
+  const drugs = state.candidate.interventions
+    .slice(0, MAX_INTERVENTIONS_IN_QUERY)
+    .map((d) => `"${d}"`)
+    .join(" OR ");
+  const condition =
+    state.mechanisms[0]?.conditionName ??
+    state.patientProfile.conditions[0]?.display ??
+    "";
+  const counterOR = COUNTER_TERMS.map((t) => `"${t}"`).join(" OR ");
+  const parts: string[] = [];
+  if (drugs) parts.push(`(${drugs})`);
+  if (condition) parts.push(`"${condition}"`);
+  parts.push(`(${counterOR})`);
   return parts.join(" AND ");
 }
 
