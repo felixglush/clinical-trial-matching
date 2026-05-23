@@ -4,15 +4,18 @@
  * Narration prompt for `synthesize-match`. The LLM does NOT touch the
  * score — that's the deterministic formula's job (eligibility-gated
  * 0.6·E + 0.4·M; literature is not a formula input). The LLM receives
- * the computed score, the two sub-scores, the structured signals, and
- * the citation list as supporting evidence, and returns a 2-3 sentence
- * `summary` plus a structured `concerns` array.
+ * the computed score, the two sub-scores, and the structured signals,
+ * and returns a 2-3 sentence `summary` plus a structured `concerns`
+ * array. The mechanism rationale (from Task 5's literature-grounded
+ * judgment) already cites supporting papers inline — we do not also
+ * surface a separate supporting-literature block in this prompt to
+ * avoid duplicating citations and prevent the narrator from inventing
+ * claims off titles it cannot read.
  */
 
 import { z } from "zod";
 
 import type {
-  Citation,
   EligibilityAssessment,
   PatientProfile,
   TrialCandidate,
@@ -30,7 +33,6 @@ export type MatchNarrationInput = {
   eligibility: EligibilityAssessment;
   mechanismScore: number;
   mechanismRationale: string;
-  literatureSupport: Citation[];
   sub: {
     eligibilityScore: number;
     mechanismScore: number;
@@ -40,7 +42,6 @@ export type MatchNarrationInput = {
 };
 
 const MAX_CRITERIA_PREVIEW = 3;
-const MAX_CITATION_TITLES = 3;
 
 export function matchNarrationPrompt(input: MatchNarrationInput): string {
   const {
@@ -49,7 +50,6 @@ export function matchNarrationPrompt(input: MatchNarrationInput): string {
     eligibility,
     mechanismScore,
     mechanismRationale,
-    literatureSupport,
     sub,
     discoveredViaRepurposing,
   } = input;
@@ -60,11 +60,6 @@ export function matchNarrationPrompt(input: MatchNarrationInput): string {
   const triggeredExclusion = eligibility.exclusion
     .filter((c) => c.met === "yes")
     .slice(0, MAX_CRITERIA_PREVIEW);
-
-  const citationTitles = literatureSupport
-    .slice(0, MAX_CITATION_TITLES)
-    .map((c) => `  - [${c.pmid}] ${c.title}`)
-    .join("\n");
 
   return [
     "Write a brief clinical summary and structured concerns for a trial-patient match.",
@@ -102,16 +97,12 @@ export function matchNarrationPrompt(input: MatchNarrationInput): string {
     "",
     `Mechanism: ${mechanismScore}/100 — ${mechanismRationale}`,
     "",
-    `Supporting literature (informational; not in the score): ${literatureSupport.length} citation(s)`,
-    literatureSupport.length > 0
-      ? citationTitles
-      : "  (no citations found)",
-    "",
     "Return:",
     "  - summary: 2-3 sentences describing the match for a clinician reviewer.",
     "    Reference the sub-scores, the eligibility verdict, and the mechanism",
-    "    rationale. The summary may cite a relevant paper title if it supports",
-    "    the match. Do not repeat the total verbatim.",
+    "    rationale. Do not invent paper titles or PubMed IDs — the mechanism",
+    "    rationale already cites the relevant papers. Do not repeat the",
+    "    total verbatim.",
     "  - concerns: a list of explicit red flags. Examples: 'patient ineligible',",
     "    'contraindication with X', 'mechanism evaluation unavailable',",
     "    'no PubMed evidence found'. Empty array if no concerns.",

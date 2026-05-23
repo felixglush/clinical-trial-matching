@@ -6,7 +6,6 @@ import {
   type MatchNarrationInput,
 } from "./match-narration.js";
 import type {
-  Citation,
   EligibilityAssessment,
   PatientProfile,
   TrialCandidate,
@@ -49,18 +48,13 @@ function elig(overall: EligibilityAssessment["overall"]): EligibilityAssessment 
   };
 }
 
-function citation(pmid: string, title: string): Citation {
-  return { pmid, title, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`, pubtype: [] };
-}
-
 function input(overrides: Partial<MatchNarrationInput> = {}): MatchNarrationInput {
   return {
     profile: profile(),
     candidate: trial(),
     eligibility: elig("likely_eligible"),
     mechanismScore: 80,
-    mechanismRationale: "Drug X targets the patient's GLP-1 pathway.",
-    literatureSupport: [citation("123", "GLP-1 in T2DM")],
+    mechanismRationale: "Drug X targets the patient's GLP-1 pathway. See [12345].",
     sub: { eligibilityScore: 75, mechanismScore: 80, total: 77 },
     discoveredViaRepurposing: false,
     ...overrides,
@@ -100,14 +94,11 @@ describe("matchNarrationPrompt", () => {
     expect(out).toMatch(/repurpos/i);
   });
 
-  it("includes citation titles when present", () => {
+  it("does not include a supporting-literature block (mechanism rationale carries citations)", () => {
     const out = matchNarrationPrompt(input());
-    expect(out).toContain("GLP-1 in T2DM");
-  });
-
-  it("notes when no citations were found", () => {
-    const out = matchNarrationPrompt(input({ literatureSupport: [] }));
-    expect(out).toMatch(/no.*citations/i);
+    expect(out).not.toMatch(/supporting literature/i);
+    expect(out).not.toMatch(/citation\(s\)/i);
+    expect(out).not.toMatch(/no citations found/i);
   });
 });
 

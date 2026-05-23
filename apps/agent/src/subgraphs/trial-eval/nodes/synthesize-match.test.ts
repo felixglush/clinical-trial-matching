@@ -200,3 +200,67 @@ describe("synthesizeMatch — TrialMatch shape", () => {
     expect(out.matches![0]!.mechanismRationale).toMatch(/unavailable/i);
   });
 });
+
+describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", () => {
+  it("propagates mechanismEvidence onto the TrialMatch", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        mechanismEvidence: [{ pmid: "A1", quote: "q", supports: "yes" }],
+        literatureSupport: [
+          { pmid: "A1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/A1/", pubtype: [] },
+        ],
+      }),
+    );
+    expect(out.matches![0]!.mechanismEvidence).toEqual([
+      { pmid: "A1", quote: "q", supports: "yes" },
+    ]);
+  });
+
+  it("filters out evidence entries whose pmid is not in literatureSupport ∪ counterEvidence", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        mechanismEvidence: [
+          { pmid: "A1", quote: "q", supports: "yes" },
+          { pmid: "INVENTED", quote: "fake", supports: "yes" },
+        ],
+        literatureSupport: [
+          { pmid: "A1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/A1/", pubtype: [] },
+        ],
+      }),
+    );
+    expect(out.matches![0]!.mechanismEvidence.map((e) => e.pmid)).toEqual(["A1"]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("flags 'counter-evidence present but unaddressed' concern", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        counterEvidence: [
+          { pmid: "X1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/X1/", pubtype: [] },
+        ],
+        counterEvidenceAddressed: null,
+      }),
+    );
+    expect(out.matches![0]!.concerns).toContain(
+      "counter-evidence present but not addressed in mechanism judgment",
+    );
+  });
+
+  it("propagates counterEvidenceAddressed onto the TrialMatch", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        counterEvidence: [
+          { pmid: "X1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/X1/", pubtype: [] },
+        ],
+        counterEvidenceAddressed: "Population differs.",
+      }),
+    );
+    expect(out.matches![0]!.counterEvidenceAddressed).toBe("Population differs.");
+  });
+});

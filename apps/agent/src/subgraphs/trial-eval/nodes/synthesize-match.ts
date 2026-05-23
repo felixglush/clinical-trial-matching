@@ -5,17 +5,22 @@
  *
  *   1. Deterministic formula computes `score` from two pillars
  *      (eligibility, mechanism). Literature is NOT a formula input —
- *      citations are surfaced as artifacts on the TrialMatch and in the
- *      narrate prompt's supporting-evidence block, but count does not
- *      affect ranking. Eligibility-gated: `ineligible → 0`,
+ *      citations are surfaced as artifacts on the TrialMatch but their
+ *      count does not affect ranking. Eligibility-gated: `ineligible → 0`,
  *      `likely_ineligible → min(25, weightedSum)`, otherwise the sum.
- *   2. LLM narrates `summary` + `concerns` given the sub-scores and
- *      structured signals (including citation titles). The LLM does NOT
- *      touch the score.
- *   3. Templated `repurposingRationale` when the candidate came from
+ *   2. LLM narrates `summary` + `concerns` given the sub-scores and the
+ *      mechanism rationale (which itself cites supporting papers). The
+ *      narrate prompt no longer carries a separate literature block —
+ *      Task 5 restructure folded citation references into the rationale.
+ *      The LLM does NOT touch the score.
+ *   3. PMID-echo filter on `state.mechanismEvidence`: drop any entry
+ *      whose `pmid` is not present in `literatureSupport ∪ counterEvidence`.
+ *      This guards against the mechanism judge hallucinating PMIDs.
+ *   4. Templated `repurposingRationale` when the candidate came from
  *      the repurposing channel.
- *   4. Assemble the TrialMatch from the candidate, the LLM narration,
- *      and the deterministic components.
+ *   5. Assemble the TrialMatch from the candidate, the LLM narration,
+ *      and the deterministic components — including filtered evidence
+ *      and counter-evidence-addressed propagated from state.
  *
  * Contract: ALWAYS returns a TrialMatch — the parent's `matches`
  * concat reducer can't distinguish a missing match from a fanned-out
@@ -69,7 +74,6 @@ export async function synthesizeMatch(
         eligibility: state.eligibility!,
         mechanismScore: sub.mechanismScore,
         mechanismRationale: state.mechanismRationale ?? "Mechanism evaluation unavailable",
-        literatureSupport: state.literatureSupport,
         sub: { ...sub, total: score },
         discoveredViaRepurposing,
       }),
@@ -84,6 +88,36 @@ export async function synthesizeMatch(
     concerns = deterministicConcerns(state);
   }
 
+  // PMID-echo filter: only keep mechanismEvidence entries whose pmid was
+  // actually retrieved in literatureSupport or counterEvidence. Guards
+  // against the mechanism judge hallucinating PMIDs.
+  const knownPmids = new Set<string>([
+    ...state.literatureSupport.map((c) => c.pmid),
+    ...state.counterEvidence.map((c) => c.pmid),
+  ]);
+  const filteredEvidence = state.mechanismEvidence.filter((e) => {
+    const ok = knownPmids.has(e.pmid);
+    if (!ok) {
+      console.warn(
+        `synthesize-match: dropping mechanismEvidence with unknown pmid=${e.pmid} (not in literatureSupport or counterEvidence)`,
+      );
+    }
+    return ok;
+  });
+
+  // Concern: counter-evidence retrieved but mechanism judgment did not
+  // address it. Indicates the Path B judge either skipped reading the
+  // negative-results pile or returned a null `counterEvidenceAddressed`.
+  if (state.counterEvidence.length > 0 && !state.counterEvidenceAddressed) {
+    concerns.push("counter-evidence present but not addressed in mechanism judgment");
+  }
+  // Concern: mechanism was scored but no literature-cited evidence
+  // survived the PMID-echo filter — the score rests on the LLM's prior,
+  // not on the retrieved corpus.
+  if (filteredEvidence.length === 0 && state.mechanismScore !== null) {
+    concerns.push("no literature-cited evidence for mechanism");
+  }
+
   const match: TrialMatch = {
     ...state.candidate,
     score,
@@ -94,11 +128,7 @@ export async function synthesizeMatch(
     literatureSupport: state.literatureSupport,
     repurposingRationale,
     concerns,
-    // v1.5 fields — populated in Task 6 (mechanism-plausibility node update)
-    // and Task 8 (the PMID-echo filter). For now, pass through from state
-    // unchanged so the parent receives whatever the subgraph wrote (or
-    // defaults `[]` / `null` from the state annotation).
-    mechanismEvidence: state.mechanismEvidence,
+    mechanismEvidence: filteredEvidence,
     counterEvidenceAddressed: state.counterEvidenceAddressed,
   };
   // Wrap in a single-element array so the subgraph's `matches` field
