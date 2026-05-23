@@ -8,7 +8,7 @@
 
 1. **Schema layer (`packages/shared/src/eligibility.ts`):** new `SafetyConcernSchema`, extend `EligibilityAssessmentSchema` with `safetyConcerns: SafetyConcern[]`.
 2. **Tools layer (`apps/agent/src/tools/`):** `pubmed.ts` becomes a real esearch+esummary client (no abstracts, no XML); `kg.ts` gains three new helpers (`pathBetween`, `findContraindicationsForDrugs`, `resolveDrugByName`) following the same conventions as the existing two.
-3. **Prompts layer (`apps/agent/src/prompts/`):** real prompts + structured-output Zod schemas for `eligibility.ts`, `mechanism-plausibility.ts` (two schemas — Path A narrate-only and Path B score+narrate), and a new `match-narration.ts`.
+3. **Prompts layer (`apps/agent/src/prompts/`):** real prompts + structured-output Zod schemas for `eligibility.ts`, `mechanism-plausibility.ts` (Path B score+narrate only; Path A is LLM-free and templated in the node), and a new `match-narration.ts`.
 4. **Subgraph nodes (`apps/agent/src/subgraphs/trial-eval/nodes/`):** real `eligibility-check`, `mechanism-plausibility` (channel-aware), `literature-support`, `synthesize-match`. `decide-if-more-evidence` is already correct and unchanged.
 
 **Tech Stack:** TypeScript (strict, `bundler` module resolution), Node 24, pnpm workspaces (exact-pinned deps), Zod 4.4.3, LangGraph.js 1.3.2, `@langchain/openai` 1.4.6 (Haiku via OpenRouter), `neo4j-driver` 5.x (already pinned), vitest 4.1.7. No new runtime deps — `fetch` for PubMed is built into Node 24.
@@ -1179,9 +1179,9 @@ git commit -m "Implement eligibility prompt + EligibilityJudgmentSchema"
 
 ---
 
-## Task 5: `prompts/mechanism-plausibility.ts` — Path A narrate + Path B score+narrate
+## Task 5: `prompts/mechanism-plausibility.ts` — Path B score+narrate (Path A is LLM-free)
 
-**Spec ref:** *Node-by-node detail* → `mechanism-plausibility` (Path A and Path B).
+**Spec ref:** *Node-by-node detail* → `mechanism-plausibility` (Path B). Path A is templated in the node — no prompt module.
 
 **Files:**
 - Modify: `apps/agent/src/prompts/mechanism-plausibility.ts`
@@ -1195,16 +1195,13 @@ Create `apps/agent/src/prompts/mechanism-plausibility.test.ts`:
 import { describe, expect, it } from "vitest";
 
 import {
-  MechanismNarrationSchema,
   MechanismPlausibilityJudgmentSchema,
-  mechanismNarratePrompt,
   mechanismScorePrompt,
 } from "./mechanism-plausibility.js";
 import type {
   KGPath,
   Mechanism,
   PatientProfile,
-  RepurposingCandidate,
   TrialCandidate,
 } from "@clinical-trial-matching/shared";
 
@@ -1262,17 +1259,6 @@ function kgPath(): KGPath {
   };
 }
 
-function repurposingCandidate(): RepurposingCandidate {
-  return {
-    drug: { id: "DB09330", name: "osimertinib", type: "drug" },
-    originalIndications: ["non-small cell lung carcinoma"],
-    rationale: "TxGNN predicted",
-    supportingPaths: [kgPath()],
-    predIndication: 0.92,
-    predContraindication: 0.05,
-  };
-}
-
 describe("mechanismScorePrompt (Path B)", () => {
   it("includes trial interventions and patient mechanisms", () => {
     const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()]);
@@ -1295,22 +1281,8 @@ describe("mechanismScorePrompt (Path B)", () => {
   });
 });
 
-describe("mechanismNarratePrompt (Path A)", () => {
-  it("includes the TxGNN score and supporting paths from the source candidate", () => {
-    const out = mechanismNarratePrompt(profile(), trial(), [mech()], repurposingCandidate());
-    expect(out).toContain("0.92");
-    expect(out).toContain("osimertinib");
-    expect(out).toContain("ERBB signaling pathway");
-  });
-
-  it("references the patient's mechanism context", () => {
-    const out = mechanismNarratePrompt(profile(), trial(), [mech()], repurposingCandidate());
-    expect(out).toContain("EGFR");
-  });
-});
-
-describe("schemas", () => {
-  it("MechanismPlausibilityJudgmentSchema accepts a valid judgment", () => {
+describe("MechanismPlausibilityJudgmentSchema", () => {
+  it("accepts a valid judgment", () => {
     const parsed = MechanismPlausibilityJudgmentSchema.parse({
       score: 85,
       rationale: "EGFR is targeted by osimertinib...",
@@ -1318,15 +1290,10 @@ describe("schemas", () => {
     expect(parsed.score).toBe(85);
   });
 
-  it("MechanismPlausibilityJudgmentSchema rejects scores outside 0..100", () => {
+  it("rejects scores outside 0..100", () => {
     expect(() =>
       MechanismPlausibilityJudgmentSchema.parse({ score: 150, rationale: "x" }),
     ).toThrow();
-  });
-
-  it("MechanismNarrationSchema accepts a rationale-only object", () => {
-    const parsed = MechanismNarrationSchema.parse({ rationale: "x" });
-    expect(parsed.rationale).toBe("x");
   });
 });
 ```
@@ -1339,7 +1306,7 @@ pnpm --filter agent test -- src/prompts/mechanism-plausibility.test.ts
 
 Expected: FAIL — current stub exports an unused function returning `""`.
 
-### Step 3: Implement the prompts + schemas
+### Step 3: Implement the prompt + schema
 
 Replace `apps/agent/src/prompts/mechanism-plausibility.ts` entirely:
 
@@ -1347,17 +1314,15 @@ Replace `apps/agent/src/prompts/mechanism-plausibility.ts` entirely:
 /**
  * # prompts/mechanism-plausibility
  *
- * Two prompts for the channel-aware `mechanism-plausibility` node:
+ * Strategy-channel (Path B) prompt for `mechanism-plausibility`:
+ * LLM gets KG paths from `kg.pathBetween` and produces a 0-100 score
+ * with rationale.
  *
- *   - Path B (strategy channel): score + narrate. LLM gets KG paths from
- *     `kg.pathBetween` and produces a 0-100 score with rationale.
- *   - Path A (repurposing channel): narrate-only. Score is TxGNN's
- *     `predIndication × 100`; LLM gets the source RepurposingCandidate's
- *     `supportingPaths` (already a KGPath, populated upstream by
- *     `find-repurposing-candidates`) and produces a rationale only.
- *
- * Both prompts share a compact mechanism representation (top genes + top
- * pathways per mechanism) mirroring `prompts/mechanism.ts`.
+ * Path A (repurposing channel) does NOT use an LLM — it's templated
+ * directly in the node (`subgraphs/trial-eval/nodes/mechanism-plausibility.ts`)
+ * because `find-repurposing-candidates` and the TxGNN explanation data
+ * already carry the rationale content; calling an LLM here would
+ * duplicate work the synthesize-match narrate LLM also does.
  */
 
 import { z } from "zod";
@@ -1366,7 +1331,6 @@ import type {
   KGPath,
   Mechanism,
   PatientProfile,
-  RepurposingCandidate,
   TrialCandidate,
 } from "@clinical-trial-matching/shared";
 
@@ -1378,11 +1342,6 @@ export const MechanismPlausibilityJudgmentSchema = z.object({
   rationale: z.string(),
 });
 export type MechanismPlausibilityJudgment = z.infer<typeof MechanismPlausibilityJudgmentSchema>;
-
-export const MechanismNarrationSchema = z.object({
-  rationale: z.string(),
-});
-export type MechanismNarration = z.infer<typeof MechanismNarrationSchema>;
 
 // Path B — strategy channel: score + narrate.
 export function mechanismScorePrompt(
@@ -1412,37 +1371,6 @@ export function mechanismScorePrompt(
     "    support / weak path; 100 = direct, well-supported by KG path)",
     "  - rationale: 2-3 sentences referencing the specific path or, if no",
     "    path was found, why the score is low.",
-  ].join("\n");
-}
-
-// Path A — repurposing channel: narrate-only (score is TxGNN-sourced).
-export function mechanismNarratePrompt(
-  profile: PatientProfile,
-  candidate: TrialCandidate,
-  mechanisms: Mechanism[],
-  source: RepurposingCandidate,
-): string {
-  const score = (source.predIndication ?? 0).toFixed(2);
-  return [
-    "TxGNN scored this drug-disease pair at indication probability " + score + ".",
-    "Explain that score using the TxGNN explanation path below, in the context",
-    "of the patient's disease mechanisms. Do NOT produce a numeric score —",
-    "only the rationale.",
-    "",
-    patientLine(profile),
-    "",
-    trialBlock(candidate),
-    "",
-    "Patient mechanisms (gene targets + pathways from PrimeKG):",
-    mechanisms.map(formatMechanism).join("\n\n") || "  (none)",
-    "",
-    "TxGNN explanation path:",
-    source.supportingPaths.length > 0
-      ? source.supportingPaths.map(formatPath).join("\n\n")
-      : "  (no explanation path available)",
-    "",
-    "Return a 2-3 sentence rationale that names the gene/pathway connecting the",
-    "drug to the patient's disease, and references the patient's mechanism context.",
   ].join("\n");
 }
 
@@ -1494,13 +1422,13 @@ function formatPath(p: KGPath): string {
 pnpm --filter agent test -- src/prompts/mechanism-plausibility.test.ts
 ```
 
-Expected: PASS, all 8 cases.
+Expected: PASS, all 5 cases.
 
 ### Step 5: Commit
 
 ```bash
 git add apps/agent/src/prompts/mechanism-plausibility.ts apps/agent/src/prompts/mechanism-plausibility.test.ts
-git commit -m "Implement mechanism-plausibility prompts (Path A narrate + Path B score)"
+git commit -m "Implement Path B mechanism-plausibility prompt (Path A is LLM-free, templated in node)"
 ```
 
 ---
@@ -1581,19 +1509,23 @@ function input(overrides: Partial<MatchNarrationInput> = {}): MatchNarrationInpu
     mechanismScore: 80,
     mechanismRationale: "Drug X targets the patient's GLP-1 pathway.",
     literatureSupport: [citation("123", "GLP-1 in T2DM")],
-    sub: { eligibilityScore: 75, mechanismScore: 80, literatureScore: 25, total: 65 },
+    sub: { eligibilityScore: 75, mechanismScore: 80, total: 77 },
     discoveredViaRepurposing: false,
     ...overrides,
   };
 }
 
 describe("matchNarrationPrompt", () => {
-  it("includes all sub-scores and the total", () => {
+  it("includes both sub-scores and the total", () => {
     const out = matchNarrationPrompt(input());
-    expect(out).toContain("75");
-    expect(out).toContain("80");
-    expect(out).toContain("25");
-    expect(out).toContain("65");
+    expect(out).toContain("75"); // eligibility sub-score
+    expect(out).toContain("80"); // mechanism sub-score
+    expect(out).toContain("77"); // total
+  });
+
+  it("does NOT include a literature sub-score line (literature is not in the formula)", () => {
+    const out = matchNarrationPrompt(input());
+    expect(out).not.toMatch(/literature:\s+\d+\/100/);
   });
 
   it("includes eligibility overall + first criterion failures", () => {
@@ -1660,10 +1592,11 @@ Create `apps/agent/src/prompts/match-narration.ts`:
  * # prompts/match-narration
  *
  * Narration prompt for `synthesize-match`. The LLM does NOT touch the
- * score — that's the deterministic formula's job. The LLM receives the
- * computed score and per-pillar sub-scores, plus the structured signals,
- * and returns a 2-3 sentence `summary` and a structured `concerns` array
- * (red flags worth surfacing).
+ * score — that's the deterministic formula's job (eligibility-gated
+ * 0.6·E + 0.4·M; literature is not a formula input). The LLM receives
+ * the computed score, the two sub-scores, the structured signals, and
+ * the citation list as supporting evidence, and returns a 2-3 sentence
+ * `summary` plus a structured `concerns` array.
  */
 
 import { z } from "zod";
@@ -1691,7 +1624,6 @@ export type MatchNarrationInput = {
   sub: {
     eligibilityScore: number;
     mechanismScore: number;
-    literatureScore: number;
     total: number;
   };
   discoveredViaRepurposing: boolean;
@@ -1737,11 +1669,10 @@ export function matchNarrationPrompt(input: MatchNarrationInput): string {
       ? "  discovery channel: repurposing (TxGNN-predicted intervention for this patient's disease)"
       : "  discovery channel: strategy (mechanism keyword match)",
     "",
-    "Sub-scores (deterministic):",
+    "Sub-scores (deterministic; literature is NOT a score input):",
     `  eligibility: ${sub.eligibilityScore}/100`,
     `  mechanism:   ${sub.mechanismScore}/100`,
-    `  literature:  ${sub.literatureScore}/100`,
-    `  total:       ${sub.total}/100`,
+    `  total:       ${sub.total}/100  (= round(0.6·eligibility + 0.4·mechanism), then eligibility-gated)`,
     "",
     `Eligibility verdict: ${eligibility.overall}`,
     failedInclusion.length > 0
@@ -1761,7 +1692,7 @@ export function matchNarrationPrompt(input: MatchNarrationInput): string {
     "",
     `Mechanism: ${mechanismScore}/100 — ${mechanismRationale}`,
     "",
-    `Literature: ${literatureSupport.length} citation(s)`,
+    `Supporting literature (informational; not in the score): ${literatureSupport.length} citation(s)`,
     literatureSupport.length > 0
       ? citationTitles
       : "  (no citations found)",
@@ -1769,7 +1700,8 @@ export function matchNarrationPrompt(input: MatchNarrationInput): string {
     "Return:",
     "  - summary: 2-3 sentences describing the match for a clinician reviewer.",
     "    Reference the sub-scores, the eligibility verdict, and the mechanism",
-    "    rationale. Do not repeat the total verbatim.",
+    "    rationale. The summary may cite a relevant paper title if it supports",
+    "    the match. Do not repeat the total verbatim.",
     "  - concerns: a list of explicit red flags. Examples: 'patient ineligible',",
     "    'contraindication with X', 'mechanism evaluation unavailable',",
     "    'no PubMed evidence found'. Empty array if no concerns.",
@@ -2212,9 +2144,8 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
   };
 }
 
-describe("mechanismPlausibility — Path A (repurposing channel)", () => {
-  it("uses TxGNN predIndication × 100 as the score, LLM narrates only", async () => {
-    __invoke.mockResolvedValue({ rationale: "EGFR is targeted..." });
+describe("mechanismPlausibility — Path A (repurposing channel, LLM-free)", () => {
+  it("uses TxGNN predIndication × 100 as the score; templated rationale with path summary; LLM never called", async () => {
     const out = await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330"]),
@@ -2222,10 +2153,15 @@ describe("mechanismPlausibility — Path A (repurposing channel)", () => {
       }),
     );
     expect(out.mechanismScore).toBe(92);
+    // Templated rationale references drug name + score + intermediate node names from supportingPaths.
+    expect(out.mechanismRationale).toContain("osimertinib");
+    expect(out.mechanismRationale).toContain("0.92");
     expect(out.mechanismRationale).toContain("EGFR");
+    // CRITICAL: no LLM call in Path A.
+    expect(__invoke).not.toHaveBeenCalled();
   });
 
-  it("falls back to templated rationale when supportingPaths is empty (no LLM call)", async () => {
+  it("templates 'no TxGNN explanation path available' when supportingPaths is empty", async () => {
     const out = await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330"]),
@@ -2233,27 +2169,11 @@ describe("mechanismPlausibility — Path A (repurposing channel)", () => {
       }),
     );
     expect(out.mechanismScore).toBe(85);
-    expect(out.mechanismRationale).toMatch(/explanation path unavailable/i);
+    expect(out.mechanismRationale).toMatch(/no TxGNN explanation path available/i);
     expect(__invoke).not.toHaveBeenCalled();
   });
 
-  it("falls back to templated rationale on LLM failure (Path A)", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    __invoke.mockRejectedValue(new Error("LLM down"));
-    const out = await mechanismPlausibility(
-      state({
-        candidate: trial(["repurposing"], ["DB09330"]),
-        repurposingCandidates: [repurposing("DB09330", 0.88, true)],
-      }),
-    );
-    expect(out.mechanismScore).toBe(88);
-    expect(out.mechanismRationale).toBeTruthy();
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
   it("picks the highest predIndication when multiple repurposingDrugIds match", async () => {
-    __invoke.mockResolvedValue({ rationale: "x" });
     const out = await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330", "DB00072"]),
@@ -2264,6 +2184,8 @@ describe("mechanismPlausibility — Path A (repurposing channel)", () => {
       }),
     );
     expect(out.mechanismScore).toBe(99);
+    expect(out.mechanismRationale).toContain("trastuzumab");
+    expect(__invoke).not.toHaveBeenCalled();
   });
 });
 
@@ -2317,8 +2239,7 @@ describe("mechanismPlausibility — Path B (strategy channel)", () => {
 });
 
 describe("mechanismPlausibility — both channels", () => {
-  it("Path A takes precedence when discoveredVia includes 'repurposing'", async () => {
-    __invoke.mockResolvedValue({ rationale: "txgnn-narrated" });
+  it("Path A takes precedence when discoveredVia includes 'repurposing'; LLM never called", async () => {
     const out = await mechanismPlausibility(
       state({
         candidate: trial(["strategy", "repurposing"], ["DB09330"]),
@@ -2326,7 +2247,8 @@ describe("mechanismPlausibility — both channels", () => {
       }),
     );
     expect(out.mechanismScore).toBe(92);
-    expect(out.mechanismRationale).toBe("txgnn-narrated");
+    expect(out.mechanismRationale).toContain("osimertinib");
+    expect(__invoke).not.toHaveBeenCalled();
   });
 });
 ```
@@ -2351,9 +2273,11 @@ Replace `apps/agent/src/subgraphs/trial-eval/nodes/mechanism-plausibility.ts` en
  * address the patient's mechanism?"
  *
  *   - Path A (candidate.discoveredVia includes "repurposing"):
- *     score = TxGNN predIndication × 100; LLM narrates rationale from
- *     the source RepurposingCandidate's `supportingPaths`. Templated
- *     fallback when supportingPaths is empty or the LLM fails.
+ *     score = TxGNN predIndication × 100; rationale is templated from
+ *     the source RepurposingCandidate (drug name, score, intermediate
+ *     node names from `supportingPaths`). NO LLM CALL — TxGNN's score
+ *     and the explanation path already carry the content; the
+ *     synthesize-match narrate LLM handles user-facing prose.
  *
  *   - Path B (strategy-only):
  *     `kg.pathBetween` per (intervention, mechanism) pair; LLM scores
@@ -2371,9 +2295,7 @@ import type {
 
 import { llm } from "../../../llm.js";
 import {
-  MechanismNarrationSchema,
   MechanismPlausibilityJudgmentSchema,
-  mechanismNarratePrompt,
   mechanismScorePrompt,
 } from "../../../prompts/mechanism-plausibility.js";
 import { pathBetween, resolveDrugByName } from "../../../tools/kg.js";
@@ -2385,57 +2307,38 @@ const MAX_KG_PATHS_PER_PROMPT = 6;
 const PATHS_PER_PAIR = 3;
 
 const judgeScore = llm.withStructuredOutput(MechanismPlausibilityJudgmentSchema);
-const judgeNarrate = llm.withStructuredOutput(MechanismNarrationSchema);
 
 export async function mechanismPlausibility(
   state: TrialEvalStateType,
 ): Promise<Partial<TrialEvalStateType>> {
   const { candidate, repurposingCandidates } = state;
   if (candidate.discoveredVia.includes("repurposing")) {
-    return await runPathA(state, repurposingCandidates);
+    const out = runPathA(state, repurposingCandidates);
+    if (out) return out;
+    // Path A's source wasn't in state — fall through to Path B.
+    console.warn(
+      `mechanism-plausibility: candidate ${candidate.nctId} claims repurposing channel but no matching RepurposingCandidate found; falling back to Path B`,
+    );
   }
   return await runPathB(state);
 }
 
-// ---------- Path A — repurposing channel ----------
+// ---------- Path A — repurposing channel (LLM-free) ----------
 
-async function runPathA(
+// Returns null when no matching RepurposingCandidate exists; caller
+// falls back to Path B. Otherwise returns the Partial state directly.
+function runPathA(
   state: TrialEvalStateType,
   repurposingCandidates: RepurposingCandidate[],
-): Promise<Partial<TrialEvalStateType>> {
+): Partial<TrialEvalStateType> | null {
   const source = pickSource(state.candidate.repurposingDrugIds, repurposingCandidates);
-  if (!source) {
-    // Defensive: trial says it came from repurposing but no matching
-    // candidate in state. Surface as Path B with no paths.
-    console.warn(
-      `mechanism-plausibility: candidate ${state.candidate.nctId} claims repurposing channel but no matching RepurposingCandidate found; falling back to Path B`,
-    );
-    return await runPathB(state);
-  }
+  if (!source) return null;
 
   const mechanismScore = Math.round((source.predIndication ?? 0) * 100);
-
-  if (source.supportingPaths.length === 0) {
-    return {
-      mechanismScore,
-      mechanismRationale: templatedRationale(source, "explanation path unavailable"),
-    };
-  }
-
-  try {
-    const { rationale } = await judgeNarrate.invoke(
-      mechanismNarratePrompt(state.patientProfile, state.candidate, state.mechanisms, source),
-    );
-    return { mechanismScore, mechanismRationale: rationale };
-  } catch (err) {
-    console.warn(
-      `mechanism-plausibility (Path A): LLM narrate failed for ${state.candidate.nctId}: ${errorMessage(err)} (templated fallback)`,
-    );
-    return {
-      mechanismScore,
-      mechanismRationale: templatedRationale(source, "narration unavailable"),
-    };
-  }
+  return {
+    mechanismScore,
+    mechanismRationale: templatedRationale(source),
+  };
 }
 
 function pickSource(
@@ -2449,10 +2352,33 @@ function pickSource(
   );
 }
 
-function templatedRationale(source: RepurposingCandidate, reason: string): string {
+// Build the Path A rationale string with optional intermediate-node
+// context from the TxGNN explanation path. Example outputs:
+//
+//   "TxGNN predicted osimertinib for non-small cell lung carcinoma
+//    (indication 0.92); via EGFR / ERBB signaling pathway."
+//
+//   "TxGNN predicted metformin for type 2 diabetes mellitus
+//    (indication 0.88); no TxGNN explanation path available."
+function templatedRationale(source: RepurposingCandidate): string {
   const score = (source.predIndication ?? 0).toFixed(2);
   const indications = source.originalIndications.join(", ") || "(unknown)";
-  return `TxGNN predicted ${source.drug.name} for ${indications} (indication ${score}); ${reason}.`;
+  const pathSummary =
+    source.supportingPaths.length > 0
+      ? `via ${formatPathSummary(source.supportingPaths[0]!)}`
+      : "no TxGNN explanation path available";
+  return `TxGNN predicted ${source.drug.name} for ${indications} (indication ${score}); ${pathSummary}.`;
+}
+
+// Pick the intermediate node names from a KG path, skipping the drug
+// (first) and disease (last) so the output reads like "EGFR / ERBB
+// signaling pathway".
+function formatPathSummary(path: KGPath): string {
+  if (path.nodes.length <= 2) return "direct association";
+  return path.nodes
+    .slice(1, -1)
+    .map((n) => n.name)
+    .join(" / ");
 }
 
 // ---------- Path B — strategy channel ----------
@@ -2540,13 +2466,13 @@ function roundRobinCap(pairs: KGPath[][], cap: number): KGPath[] {
 pnpm --filter agent test -- src/subgraphs/trial-eval/nodes/mechanism-plausibility.test.ts
 ```
 
-Expected: PASS, all 8 cases.
+Expected: PASS, all 7 cases.
 
 ### Step 5: Commit
 
 ```bash
 git add apps/agent/src/subgraphs/trial-eval/nodes/mechanism-plausibility.ts apps/agent/src/subgraphs/trial-eval/nodes/mechanism-plausibility.test.ts
-git commit -m "Implement mechanism-plausibility: channel-aware Path A + Path B"
+git commit -m "Implement mechanism-plausibility: LLM-free Path A + LLM-driven Path B"
 ```
 
 ---
@@ -2904,17 +2830,17 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
   };
 }
 
-describe("synthesizeMatch — score formula", () => {
-  it("eligible + mechanism 80 + 3 citations → 89", async () => {
+describe("synthesizeMatch — score formula (eligibility + mechanism only; no literature)", () => {
+  it("eligible + mechanism 80 → 92", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
       state({ eligibility: elig("eligible"), mechanismScore: 80 }),
     );
-    // 0.5*100 + 0.3*80 + 0.2*75 = 50 + 24 + 15 = 89
-    expect(out.match!.score).toBe(89);
+    // 0.6*100 + 0.4*80 = 60 + 32 = 92
+    expect(out.match!.score).toBe(92);
   });
 
-  it("likely_ineligible + null mechanism + 0 citations → capped at 25 by gate", async () => {
+  it("likely_ineligible + null mechanism → capped at 25 by gate", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
       state({
@@ -2924,7 +2850,7 @@ describe("synthesizeMatch — score formula", () => {
         literatureSupport: [],
       }),
     );
-    // weightedSum = 0.5*25 + 0.3*50 + 0.2*0 = 27.5 → 28. Gate: min(25, 28) = 25.
+    // weightedSum = 0.6*25 + 0.4*50 = 15 + 20 = 35. Gate: min(25, 35) = 25.
     expect(out.match!.score).toBe(25);
   });
 
@@ -2940,19 +2866,15 @@ describe("synthesizeMatch — score formula", () => {
     expect(out.match!.score).toBe(0);
   });
 
-  it("literature score saturates at 4 citations", async () => {
+  it("citation count does not affect the score (literature is not in the formula)", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
-    const out4 = await synthesizeMatch(
-      state({
-        literatureSupport: [citation("1"), citation("2"), citation("3"), citation("4")],
-      }),
-    );
+    const out0 = await synthesizeMatch(state({ literatureSupport: [] }));
     const out10 = await synthesizeMatch(
       state({
         literatureSupport: Array.from({ length: 10 }, (_, i) => citation(String(i))),
       }),
     );
-    expect(out4.match!.score).toBe(out10.match!.score);
+    expect(out0.match!.score).toBe(out10.match!.score);
   });
 
   it("null mechanism maps to 50 in the formula", async () => {
@@ -2960,9 +2882,9 @@ describe("synthesizeMatch — score formula", () => {
     const out = await synthesizeMatch(
       state({ mechanismScore: null, mechanismRationale: null }),
     );
-    // eligibility=likely_eligible(75) + mechanism=null→50 + lit=3→75
-    // = 0.5*75 + 0.3*50 + 0.2*75 = 37.5 + 15 + 15 = 67.5 → 68
-    expect(out.match!.score).toBe(68);
+    // eligibility=likely_eligible(75) + mechanism=null→50
+    // = 0.6*75 + 0.4*50 = 45 + 20 = 65
+    expect(out.match!.score).toBe(65);
   });
 });
 
@@ -3052,11 +2974,15 @@ Replace `apps/agent/src/subgraphs/trial-eval/nodes/synthesize-match.ts` entirely
  *
  * Compose the final `TrialMatch`. Four steps:
  *
- *   1. Deterministic formula computes `score` from the three pillars.
- *      Eligibility-gated: `ineligible → 0`, `likely_ineligible →
- *      min(25, weightedSum)`, otherwise the weighted sum.
+ *   1. Deterministic formula computes `score` from two pillars
+ *      (eligibility, mechanism). Literature is NOT a formula input —
+ *      citations are surfaced as artifacts on the TrialMatch and in the
+ *      narrate prompt's supporting-evidence block, but count does not
+ *      affect ranking. Eligibility-gated: `ineligible → 0`,
+ *      `likely_ineligible → min(25, weightedSum)`, otherwise the sum.
  *   2. LLM narrates `summary` + `concerns` given the sub-scores and
- *      structured signals. The LLM does NOT touch the score.
+ *      structured signals (including citation titles). The LLM does NOT
+ *      touch the score.
  *   3. Templated `repurposingRationale` when the candidate came from
  *      the repurposing channel.
  *   4. Assemble the TrialMatch from the candidate, the LLM narration,
@@ -3084,11 +3010,9 @@ import {
 import type { TrialEvalStateType } from "../state.js";
 import { errorMessage } from "../../../util/error.js";
 
-const WEIGHT_ELIGIBILITY = 0.5;
-const WEIGHT_MECHANISM = 0.3;
-const WEIGHT_LITERATURE = 0.2;
+const WEIGHT_ELIGIBILITY = 0.6;
+const WEIGHT_MECHANISM = 0.4;
 const LIKELY_INELIGIBLE_CAP = 25;
-const LITERATURE_SATURATION = 4; // 4+ citations → 100
 
 const judgeNarration = llm.withStructuredOutput(MatchNarrationSchema);
 
@@ -3150,23 +3074,16 @@ export async function synthesizeMatch(
 type SubScores = {
   eligibilityScore: number;
   mechanismScore: number;
-  literatureScore: number;
   total: number;
 };
 
 function computeSubScores(state: TrialEvalStateType): SubScores {
   const eligibilityScore = mapEligibility(state.eligibility?.overall);
   const mechanismScore = state.mechanismScore ?? 50;
-  const literatureScore = Math.min(
-    100,
-    state.literatureSupport.length * (100 / LITERATURE_SATURATION),
-  );
   const total = Math.round(
-    WEIGHT_ELIGIBILITY * eligibilityScore +
-      WEIGHT_MECHANISM * mechanismScore +
-      WEIGHT_LITERATURE * literatureScore,
+    WEIGHT_ELIGIBILITY * eligibilityScore + WEIGHT_MECHANISM * mechanismScore,
   );
-  return { eligibilityScore, mechanismScore, literatureScore, total };
+  return { eligibilityScore, mechanismScore, total };
 }
 
 function mapEligibility(overall: string | undefined): number {
@@ -3221,7 +3138,8 @@ function templatedSummary(
   sub: SubScores,
 ): string {
   const overall = state.eligibility?.overall ?? "unclear";
-  return `${state.candidate.title}: eligibility=${overall}, mechanism=${sub.mechanismScore}, ${state.literatureSupport.length} citation(s); composite score ${score}.`;
+  const citCount = state.literatureSupport.length;
+  return `${state.candidate.title}: eligibility=${overall}, mechanism=${sub.mechanismScore}/100, ${citCount} supporting citation(s); composite score ${score}.`;
 }
 
 function deterministicConcerns(state: TrialEvalStateType): string[] {
@@ -3246,7 +3164,7 @@ function deterministicConcerns(state: TrialEvalStateType): string[] {
 pnpm --filter agent test -- src/subgraphs/trial-eval/nodes/synthesize-match.test.ts
 ```
 
-Expected: PASS, all 10 cases.
+Expected: PASS, all 10 cases (5 formula tests + 2 repurposingRationale + 2 fallback + 2 shape — 11 total assertions across 10 `it` blocks).
 
 ### Step 5: Commit
 
@@ -3269,8 +3187,8 @@ git commit -m "Implement synthesize-match: gated formula score + LLM narrate + a
 Replace the `### Subgraph state` table to add `safetyConcerns` on `eligibility`'s row, and rewrite the `### eligibility-check`, `### mechanism-plausibility`, and `### synthesize-match` sections to reflect:
 
 - `eligibility-check`: now performs a deterministic safety Cypher step (`kg.findContraindicationsForDrugs`) before the LLM call; surfaces `SafetyConcern[]` on the assessment.
-- `mechanism-plausibility`: channel-aware. Path A (repurposing) uses TxGNN's `predIndication × 100` and only narrates; Path B (strategy) runs `kg.pathBetween` + LLM scoring.
-- `synthesize-match`: score is a deterministic, eligibility-gated weighted sum (`0.5·E + 0.3·M + 0.2·L`, with `ineligible → 0` and `likely_ineligible → min(25, sum)`); LLM narrates `summary` + `concerns` only.
+- `mechanism-plausibility`: channel-aware. Path A (repurposing) uses TxGNN's `predIndication × 100` with a templated rationale, **no LLM call**; Path B (strategy) runs `kg.pathBetween` + LLM scoring.
+- `synthesize-match`: score is a deterministic, eligibility-gated two-pillar weighted sum (`0.6·E + 0.4·M`, with `ineligible → 0` and `likely_ineligible → min(25, sum)`). **Literature is not in the formula**: `literatureSupport` remains on the TrialMatch and is shown to the narrate LLM as supporting evidence, but citation count does not affect ranking. LLM narrates `summary` + `concerns` only.
 
 Also update the **Where to look for what** table to add `docs/superpowers/specs/2026-05-23-trial-eval-subgraph-design.md` as the spec entry for the subgraph.
 
