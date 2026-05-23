@@ -232,6 +232,8 @@ The match must:
   - Look up the source RepurposingCandidate via `candidate.repurposingDrugIds[0]` against `state.repurposingCandidates`.
   - Append its `supportingPaths` to the KG paths block in the prompt (clearly labeled as "TxGNN-predicted repurposing path", separate from the per-pair `pathBetween` results).
 
+> **Note on path provenance.** `RepurposingCandidate.supportingPaths` is already a `KGPath[]` in the exact shape this node's prompt consumes — `find-repurposing-candidates` populates it via `tools/txgnn.ts::lookupExplanation()`, and the TxGNN explanation data (`apps/agent/src/data/txgnn-explanations.json`) is committed in `KGPathSchema` form (types pre-normalized to `gene_protein`, edges already directional with PrimeKG-verbatim relation strings, uniformly `drug → gene → process → disease` 3-hop). This node does **not** re-query TxGNN, re-run Cypher to materialize the explanation, or transform the path shape. The drug-eval v2 spec's "Cypher metapath fallback for unexplained matches" remains deferred per that spec's lazy-fallback decision; in v1 of this design, an absent explanation surfaces as an empty `supportingPaths: []` and the node just runs the prompt without the repurposing-context block.
+
 **Step 2 — LLM scoring:**
 
 - Prompt receives: trial interventions + brief summary, ranked patient mechanisms (top gene names + top pathway names per mechanism, mirroring `mechanismPrompt`'s compact layout), KG paths (Step 1), repurposing supporting paths (Step 1a, if applicable).
