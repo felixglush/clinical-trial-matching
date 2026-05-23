@@ -196,16 +196,20 @@ Two implicit joins to note:
 A self-contained `StateGraph` invoked once per candidate. Lives in [apps/agent/src/subgraphs/trial-eval/](../apps/agent/src/subgraphs/trial-eval/).
 
 ```
-START → eligibility-check → mechanism-plausibility → literature-support ─┐
-                                                          ↑              │
-                                                          │              ↓
-                                                          └── decide-if-more-evidence
-                                                                         │ (proceed)
-                                                                         ↓
-                                                                   synthesize-match
-                                                                         ↓
-                                                                        END
+START → eligibility-check → literature-support ─┐
+                                  ↑             │
+                                  │             ↓
+                                  └── decide-if-more-evidence
+                                                │ (proceed)
+                                                ↓
+                                       mechanism-plausibility
+                                                ↓
+                                       synthesize-match
+                                                ↓
+                                               END
 ```
+
+The cycle now sits on `literature-support` (not on the old `literature-support → synthesize-match` hand-off). Literature is gathered *before* mechanism-plausibility so Path B's prompt can be literature-grounded.
 
 ### Subgraph state
 
@@ -218,7 +222,10 @@ START → eligibility-check → mechanism-plausibility → literature-support �
 | `eligibility` | `EligibilityAssessment \| null` | Written by eligibility-check; carries `safetyConcerns: SafetyConcern[]` from the deterministic Cypher step |
 | `mechanismScore` | `number \| null` | Written by mechanism-plausibility |
 | `mechanismRationale` | `string \| null` | Written by mechanism-plausibility |
-| `literatureSupport` | `Citation[]` | Appended by literature-support (across cycle iterations) |
+| `mechanismEvidence` | `MechanismEvidenceItem[]` | Written by mechanism-plausibility (Path B); the literature-cited evidence the LLM used to ground its score. Filtered by synthesize-match's PMID-echo pass before flowing onto `TrialMatch` |
+| `counterEvidenceAddressed` | `string \| null` | Written by mechanism-plausibility (Path B) when `counterEvidence` was non-empty; the LLM's explicit reconciliation of the negative findings |
+| `literatureSupport` | `Citation[]` | Appended by literature-support (across cycle iterations); supporting evidence with `abstractExcerpt` populated |
+| `counterEvidence` | `Citation[]` | Written by literature-support on attempt 0 only (negative/failure-language PubMed query); fed into the mechanism-plausibility prompt |
 | `evidenceAttempts` | `number` | Incremented by literature-support; caps the cycle |
 | `match` | `TrialMatch \| null` | Written by synthesize-match; returned to parent |
 
@@ -236,51 +243,62 @@ Runs two steps. **Step 1 — deterministic safety lookup (no LLM).** Resolve eac
 
 `safetyConcerns` is always the Step 1 result regardless of what the LLM returns (it's deterministic data, not a judgment). Step 1 Cypher failure → `safetyConcerns: []` with a warn-log; the LLM step still runs. Step 2 LLM failure → `overall: "unclear"` with empty inclusion/exclusion arrays; synthesize-match maps `unclear → 50` for the formula.
 
+### `literature-support`
+
+**Reads:** `candidate`, `mechanisms`, `literatureSupport` (prior attempt), `evidenceAttempts`
+**Writes:** `literatureSupport` (replace reducer; node-level dedupe-merge with prior), `counterEvidence` (attempt 0 only), increments `evidenceAttempts`
+**Tools:** `pubmed.searchPubMed(query, maxResults = 10)`, `pubmed.fetchAbstracts(pmids)`
+
+Constructs a PubMed query from the trial's drug name(s) (`candidate.interventions.slice(0, 3)`), the patient's primary condition (`mechanisms[0].conditionName` or first active condition), and the primary mechanism keyword (`mechanisms[0].pathways[0].name`, falling back to the first gene name). Attempt 0: `(drug1 OR drug2 OR drug3) AND <condition> AND <mechanism>`. Attempt 1 (broaden): drops the mechanism keyword — the most likely false-negative term.
+
+After the supporting-evidence search, the node calls `pubmed.fetchAbstracts` on the returned PMIDs and populates each `Citation.abstractExcerpt` so the downstream mechanism-plausibility prompt has actual content to reason over (not just titles). Abstracts are truncated to a small budget per citation; failures fall back to an empty excerpt.
+
+**Counter-evidence query (attempt 0 only).** After the supporting search, attempt 0 also runs a second PubMed query for negative findings: the same `drug AND condition` core ANDed with `(failed OR discontinued OR futility OR toxicity OR negative OR withdrawn OR "no benefit")`. Abstracts are fetched the same way. Results land on `state.counterEvidence` (separate field from `literatureSupport`) so the mechanism-plausibility LLM can be shown both sides and explicitly reconcile failure-mode literature. The broaden attempt skips this query — the goal of broadening is to surface *any* supporting hit, not to rebroaden counter-evidence.
+
+After the supporting call, the node performs a `dedupeByPmid([...prior, ...new])` merge before writing back. The replace reducer plus node-level merge keeps the state contract simple while preventing a second-attempt-with-fewer-hits regression (a broadened query that misses a niche citation can't shrink the set).
+
+Citations are **artifacts and evidence-grounding inputs**. They flow through to `TrialMatch.literatureSupport` for the clinician brief, the `synthesize-match` narrate prompt sees citation counts, and — new in v1.5 — `mechanism-plausibility` Path B consumes both `literatureSupport` (with abstracts) and `counterEvidence` to ground its score and rationale. Citation count still does **not** directly feed the score formula; the pillars that score are eligibility and mechanism.
+
+PubMed failure → state unchanged for this attempt, `evidenceAttempts++` regardless so the cycle bound still applies. Counter-evidence call failure is non-fatal: `counterEvidence` stays empty and the supporting-evidence write proceeds.
+
+### `decide-if-more-evidence` (routing function)
+
+**Reads:** `literatureSupport`, `evidenceAttempts`
+**Returns:** `"literature-support"` (cycle) or `"mechanism-plausibility"` (proceed)
+
+Cycles back to `literature-support` if both: fewer than `MIN_CITATIONS = 3` citations were found **and** `evidenceAttempts < MAX_EVIDENCE_ATTEMPTS = 2`. Otherwise proceeds to mechanism-plausibility (which is now downstream of literature so Path B can be literature-grounded).
+
+The cycle bound is mostly defensive — even if PubMed returns nothing on a broadened query, the workflow proceeds. The bound prevents pathological loops on obscure trials.
+
 ### `mechanism-plausibility`
 
-**Reads:** `patientProfile`, `candidate`, `mechanisms`, `repurposingCandidates`
-**Writes:** `mechanismScore` (0–100), `mechanismRationale`
+**Reads:** `patientProfile`, `candidate`, `mechanisms`, `repurposingCandidates`, `literatureSupport`, `counterEvidence`
+**Writes:** `mechanismScore` (0–100), `mechanismRationale`, `mechanismEvidence` (Path B), `counterEvidenceAddressed` (Path B)
 **Tools:** `kg.resolveDrugByName`, `kg.pathBetween(drugId, diseaseId, maxHops=3)` (Path B only)
 **Prompt:** `mechanismPlausibilityPrompt` (Path B only)
 **LLM call:** Conditional — Path B only.
 
 Channel-aware. The repurposing channel already produced a TxGNN-scored drug-disease pair upstream; re-scoring it with `pathBetween` + an LLM duplicates work and risks signal drift. The strategy channel is a lexical CT.gov keyword match with no upstream biology vetting, so it needs the full pass.
 
-**Path A — repurposing channel (no LLM call).** Triggered when `candidate.discoveredVia.includes("repurposing")`. Looks up the source `RepurposingCandidate` via `candidate.repurposingDrugIds[0]` (when multiple repurposing drugs surfaced the same trial, picks the entry with the highest `predIndication`). Then:
+**Path A — repurposing channel (no LLM call).** Unchanged from v1.0. Triggered when `candidate.discoveredVia.includes("repurposing")`. Looks up the source `RepurposingCandidate` via `candidate.repurposingDrugIds[0]` (when multiple repurposing drugs surfaced the same trial, picks the entry with the highest `predIndication`). Then:
 
 - `mechanismScore = round(sourceRC.predIndication * 100)`.
 - `mechanismRationale` is templated from `sourceRC.supportingPaths[0]` — the TxGNN explanation path committed as data on the candidate. The template names the drug, the original indication(s), the `predIndication` value, and the intermediate node names from the supporting path (e.g. `"via EGFR / ERBB signaling pathway"`). Missing `supportingPaths` falls back to `"no TxGNN explanation path available"`; score is still TxGNN-sourced.
 
-No LLM call: `find-repurposing-candidates` already produced the canonical one-line rationale, and `synthesize-match`'s narrate LLM composes the user-facing `summary` from all the structured signals. A fourth generator here would re-narrate content the synthesize step already covers.
+No LLM call: `find-repurposing-candidates` already produced the canonical one-line rationale, and `synthesize-match`'s narrate LLM composes the user-facing `summary` from all the structured signals. A fourth generator here would re-narrate content the synthesize step already covers. `mechanismEvidence` and `counterEvidenceAddressed` are not populated on Path A (the TxGNN signal is the audit surface).
 
-**Path B — strategy channel (LLM + KG).** Triggered when the candidate has no repurposing provenance. For each resolved intervention × each patient mechanism (one per active condition, ≤5), calls `kg.pathBetween(drugId, mechanism.primekgDiseaseId, maxHops=3)` returning up to 5 paths per pair. The global path list is truncated round-robin to `MAX_KG_PATHS_PER_PROMPT = 6` so every mechanism gets a chance. The LLM then receives the trial's intervention(s), the ranked mechanisms (compact gene/pathway layout), and the KG paths; returns `MechanismPlausibilityJudgmentSchema = { score: 0–100, rationale: string }`. Scoring rubric in the prompt: 0 = no plausible mechanism, 50 = indirect / weak path, 100 = direct and well-supported.
+**Path B — strategy channel (LLM + KG + literature, v1.5).** Triggered when the candidate has no repurposing provenance. For each resolved intervention × each patient mechanism (one per active condition, ≤5), calls `kg.pathBetween(drugId, mechanism.primekgDiseaseId, maxHops=3)` returning up to 5 paths per pair. The global path list is truncated round-robin to `MAX_KG_PATHS_PER_PROMPT = 6` so every mechanism gets a chance.
+
+The LLM prompt is **literature-grounded**: it receives the trial's intervention(s), the ranked mechanisms (compact gene/pathway layout), the KG paths, the supporting `literatureSupport` citations **grouped by relevance tier with their `abstractExcerpt`s**, and the `counterEvidence` citations (also with excerpts). Tier grouping (high / medium / low) is a heuristic over the citation set so the LLM can weight stronger evidence more heavily. Returns `MechanismPlausibilityJudgmentSchema = { score: 0–100, rationale: string, evidence: MechanismEvidenceItem[], counterEvidenceAddressed?: string }`:
+
+- `evidence[]` — the citations the LLM actually used to ground its judgment, each tagged with PMID and a one-line reason. Synthesize-match runs a PMID-echo filter against `literatureSupport ∪ counterEvidence` before this lands on `TrialMatch.mechanismEvidence` (entries with hallucinated/unknown PMIDs are dropped).
+- `counterEvidenceAddressed` — required when `counterEvidence` is non-empty; an explicit reconciliation of the negative findings (e.g. "the failed trial used X dose; this trial uses Y"). Null when there was no counter-evidence to address.
+
+Scoring rubric in the prompt: 0 = no plausible mechanism, 50 = indirect / weak path, 100 = direct and well-supported. The literature-grounded prompt biases the LLM toward citing real evidence rather than free-text speculation; the PMID-echo filter in synthesize-match enforces that downstream.
 
 **Both channels.** If a trial was surfaced by both repurposing and strategy, Path A wins — TxGNN is the authoritative score for that drug-disease pair.
 
-**Error handling.** Path A cannot fail in the LLM sense (no LLM call). Path B KG-call failure → empty paths, LLM still runs with a "KG unavailable" note. Path B LLM failure → `{ mechanismScore: null, mechanismRationale: null }`; synthesize-match maps null → 50 (neutral) and adds a concern.
-
-### `literature-support`
-
-**Reads:** `candidate`, `mechanisms`, `literatureSupport` (prior attempt), `evidenceAttempts`
-**Writes:** `literatureSupport` (replace reducer; node-level dedupe-merge with prior), increments `evidenceAttempts`
-**Tools:** `pubmed.searchPubMed(query, maxResults = 10)`
-
-Constructs a PubMed query from the trial's drug name(s) (`candidate.interventions.slice(0, 3)`), the patient's primary condition (`mechanisms[0].conditionName` or first active condition), and the primary mechanism keyword (`mechanisms[0].pathways[0].name`, falling back to the first gene name). Attempt 0: `(drug1 OR drug2 OR drug3) AND <condition> AND <mechanism>`. Attempt 1 (broaden): drops the mechanism keyword — the most likely false-negative term.
-
-After each call, the node performs a `dedupeByPmid([...prior, ...new])` merge before writing back. The replace reducer plus node-level merge keeps the state contract simple while preventing a second-attempt-with-fewer-hits regression (a broadened query that misses a niche citation can't shrink the set).
-
-Citations are **artifacts only** — they flow through to `TrialMatch.literatureSupport` for the clinician brief and the `synthesize-match` narrate prompt sees the first 3 titles when writing `summary`, but citation count does **not** feed the score formula. Counting CT.gov drug-condition citations measures "has this combo ever been studied" (yes — that's why CT.gov has the trial), not "is the evidence relevant to this patient." The pillars that score are eligibility and mechanism; literature accompanies the match as supporting evidence the reviewer can follow.
-
-PubMed failure → state unchanged for this attempt, `evidenceAttempts++` regardless so the cycle bound still applies.
-
-### `decide-if-more-evidence` (routing function)
-
-**Reads:** `literatureSupport`, `evidenceAttempts`
-**Returns:** `"literature-support"` (cycle) or `"synthesize-match"` (proceed)
-
-Cycles back to `literature-support` if both: fewer than `MIN_CITATIONS = 3` citations were found **and** `evidenceAttempts < MAX_EVIDENCE_ATTEMPTS = 2`. Otherwise proceeds to synthesis.
-
-The cycle bound is mostly defensive — even if PubMed returns nothing on a broadened query, the workflow proceeds. The bound prevents pathological loops on obscure trials.
+**Error handling.** Path A cannot fail in the LLM sense (no LLM call). Path B KG-call failure → empty paths, LLM still runs with a "KG unavailable" note. Path B LLM failure → `{ mechanismScore: null, mechanismRationale: null, mechanismEvidence: [], counterEvidenceAddressed: null }`; synthesize-match maps null → 50 (neutral) and adds a concern.
 
 ### `synthesize-match`
 
@@ -306,15 +324,24 @@ Weights are named constants in the node (`WEIGHT_ELIGIBILITY = 0.6`, `WEIGHT_MEC
 
 The eligibility gate enforces that an unenrollable patient can't outrank an enrollable one regardless of biology. Without it, `(ineligible, mechanism=80)` would score 32 — reading as "marginal," which is wrong: the patient can't enroll. The gate makes eligibility *permission to be scored*, not just one of two weights. `score` is therefore documented as a sort key, not a clinical verdict — the audit surface is the per-pillar fields on `TrialMatch` (`eligibility.overall`, `mechanismScore`, `literatureSupport`, `concerns`); clinicians read those, the score just orders the list.
 
-**Literature is not a formula input.** Citation count saturates fast across CT.gov drug-condition pairs (see `literature-support` above). The narrate LLM does see citation titles when writing `summary` — and `literatureSupport` flows onto the final `TrialMatch` — but the number doesn't move the score.
+**Literature is not a formula input.** Citation count saturates fast across CT.gov drug-condition pairs (see `literature-support` above). `literatureSupport` flows onto the final `TrialMatch` and is consumed upstream by mechanism-plausibility Path B to ground its score, but the number doesn't move the score formula here.
 
-**LLM narrate step.** The prompt receives a patient summary, trial summary, the two sub-scores + total, eligibility verdict + first 3 `no` inclusion verdicts + first 3 `yes` exclusion verdicts + `safetyConcerns`, the mechanism rationale, and the citation count + first 3 titles. Structured output `MatchNarrationSchema = { summary: string, concerns: string[] }` — a 2–3 sentence `summary` and an explicit `concerns[]` array (contraindication present, inclusion criteria not met, no mechanism path, no PubMed evidence) so the UI can render badges.
+**LLM narrate step.** The prompt receives a patient summary, trial summary, the two sub-scores + total, eligibility verdict + first 3 `no` inclusion verdicts + first 3 `yes` exclusion verdicts + `safetyConcerns`, and the mechanism rationale. The citations block was **dropped from the narrate prompt in v1.5** — literature now feeds the upstream mechanism-plausibility judgment, and the narrate LLM should compose `summary` from the structured signals rather than re-citing PubMed (which encouraged hallucinated PMIDs in v1.0). Structured output `MatchNarrationSchema = { summary: string, concerns: string[] }` — a 2–3 sentence `summary` and an explicit `concerns[]` array (contraindication present, inclusion criteria not met, no mechanism path, etc.) so the UI can render badges.
+
+**PMID-echo filter on `mechanismEvidence` (v1.5).** Before assembling the match, synthesize-match takes `state.mechanismEvidence` from Path B and drops any entry whose PMID is not present in `literatureSupport ∪ counterEvidence`. This is a defense-in-depth check against the mechanism LLM citing a PMID it wasn't given — if the PMID didn't come from the actual PubMed retrieval, it doesn't belong on `TrialMatch`. The filtered list (plus `state.counterEvidenceAddressed`) is what flows to the match. Path A skips the filter (it never populates `mechanismEvidence`).
+
+**Deterministic concerns (v1.5 additions).** Two new concerns are appended deterministically when the corresponding signal fires:
+
+- `"counter-evidence present but not addressed in mechanism judgment"` — when `counterEvidence.length > 0` and `counterEvidenceAddressed` is null/empty (Path B only).
+- `"no literature-cited evidence for mechanism"` — when Path B was taken but the post-filter `mechanismEvidence` is empty (the LLM cited nothing, or everything got filtered out).
+
+These run alongside the LLM-generated `concerns` (which the narrate prompt is asked to produce) so the UI surfaces evidence-rigor gaps even if the narration glosses over them.
 
 **`repurposingRationale`** is templated, not LLM-generated: when `candidate.repurposingDrugIds[0]` exists, look up the source `RepurposingCandidate` and populate `{ drugName, originalIndications, summary }` directly from its fields.
 
-**Assembly.** `match` spreads the `TrialCandidate` fields then layers in `score`, `summary`, `eligibility` (with `safetyConcerns`), `mechanismScore`, `mechanismRationale`, `literatureSupport`, `repurposingRationale`, and `concerns`.
+**Assembly.** `match` spreads the `TrialCandidate` fields then layers in `score`, `summary`, `eligibility` (with `safetyConcerns`), `mechanismScore`, `mechanismRationale`, `mechanismEvidence` (post-filter), `counterEvidenceAddressed`, `literatureSupport`, `repurposingRationale`, and `concerns`.
 
-**LLM narrate failure** → templated fallback `summary` referencing the candidate title + sub-scores + citation count; `concerns` derived deterministically (e.g. "safety concern: contraindication with X"); the deterministic score still computes; the match still flows back. The subgraph contract is *always return a `TrialMatch`* — the parent `matches` concat reducer can't distinguish a fan-out that returned 0 matches from one that returned N, so a degraded match with concerns is strictly more useful than a silent drop.
+**LLM narrate failure** → templated fallback `summary` referencing the candidate title + sub-scores; `concerns` derived deterministically (e.g. "safety concern: contraindication with X", plus the v1.5 evidence-rigor concerns above); the deterministic score still computes; the match still flows back. The subgraph contract is *always return a `TrialMatch`* — the parent `matches` concat reducer can't distinguish a fan-out that returned 0 matches from one that returned N, so a degraded match with concerns is strictly more useful than a silent drop.
 
 The returned `match` flows back to the parent graph's `matches` array via the concat reducer.
 
@@ -334,6 +361,7 @@ The returned `match` flows back to the parent graph's `matches` array via the co
 | See a node body | [apps/agent/src/nodes/](../apps/agent/src/nodes/) |
 | See the subgraph | [apps/agent/src/subgraphs/trial-eval/](../apps/agent/src/subgraphs/trial-eval/) |
 | See the trial-eval subgraph spec | [docs/superpowers/specs/2026-05-23-trial-eval-subgraph-design.md](./superpowers/specs/2026-05-23-trial-eval-subgraph-design.md) |
+| See the trial-eval v1.5 evidence-rigor spec | [docs/superpowers/specs/2026-05-23-trial-eval-evidence-rigor.md](./superpowers/specs/2026-05-23-trial-eval-evidence-rigor.md) |
 | See a prompt | [apps/agent/src/prompts/](../apps/agent/src/prompts/) |
 | See KG queries | [apps/agent/src/tools/kg.ts](../apps/agent/src/tools/kg.ts) |
 | See CT.gov client | [apps/agent/src/tools/clinicaltrials.ts](../apps/agent/src/tools/clinicaltrials.ts) |
