@@ -2,8 +2,9 @@
  * # prompts/mechanism-plausibility
  *
  * Strategy-channel (Path B) prompt for `mechanism-plausibility`:
- * LLM gets KG paths from `kg.pathBetween` and produces a 0-100 score
- * with rationale.
+ * LLM gets KG paths from `kg.pathBetween` plus tiered PubMed literature
+ * (supporting + counter-evidence) and produces a 0-100 score with a
+ * literature-cited rationale (v1.5).
  *
  * Path A (repurposing channel) does NOT use an LLM — it's templated
  * directly in the node (`subgraphs/trial-eval/nodes/mechanism-plausibility.ts`)
@@ -15,31 +16,65 @@
 import { z } from "zod";
 
 import type {
+  Citation,
   KGPath,
   Mechanism,
   PatientProfile,
   TrialCandidate,
 } from "@clinical-trial-matching/shared";
 
+import { tierForCitation, tierLabel, type EvidenceTier } from "../util/pubmed-tiers.js";
+
 const GENES_PER_PROMPT = 6;
 const PATHWAYS_PER_PROMPT = 6;
 
+// No `.min`/`.max` on `evidence` — Bedrock structured-output route rejects
+// `maxItems`. Cap is enforced via the prompt body + post-LLM slice in the node.
 export const MechanismPlausibilityJudgmentSchema = z.object({
   score: z.number().int().min(0).max(100),
   rationale: z.string(),
+  evidence: z.array(
+    z.object({
+      pmid: z.string(),
+      quote: z.string(),
+      supports: z.enum(["yes", "weak", "no"]),
+    }),
+  ),
+  counterEvidenceAddressed: z.string().optional(),
 });
 export type MechanismPlausibilityJudgment = z.infer<typeof MechanismPlausibilityJudgmentSchema>;
 
-// Path B — strategy channel: score + narrate.
+// Path B — strategy channel: score + narrate with literature grounding.
 export function mechanismScorePrompt(
   profile: PatientProfile,
   candidate: TrialCandidate,
   mechanisms: Mechanism[],
   kgPaths: KGPath[],
+  supporting: Citation[],
+  counter: Citation[],
 ): string {
+  const grouped = groupByTier(supporting);
+  const literatureBlock = [
+    `${tierLabel(1)}:`,
+    formatTier(grouped[1], { showAbstract: true }),
+    "",
+    `${tierLabel(2)}:`,
+    formatTier(grouped[2], { showAbstract: true }),
+    "",
+    `${tierLabel(3)}:`,
+    formatTier(grouped[3], { showAbstract: false }),
+  ].join("\n");
+
+  const counterBlock =
+    counter.length > 0
+      ? counter.map((c) => formatCitation(c, { showAbstract: true })).join("\n\n")
+      : "  No counter-evidence retrieved.";
+
   return [
     "You are scoring the biological plausibility of a clinical trial's",
-    "intervention(s) targeting this patient's disease mechanisms.",
+    "intervention(s) targeting this patient's disease mechanisms. Use both",
+    "KG paths AND published literature as evidence. Higher-tier literature",
+    "outweighs lower-tier (Tier-1 > Tier-2 > Tier-3).",
     "",
     patientLine(profile),
     "",
@@ -53,12 +88,51 @@ export function mechanismScorePrompt(
       : "No KG path found within 3 hops between any (intervention, condition) pair.",
     kgPaths.length > 0 ? kgPaths.map(formatPath).join("\n\n") : "",
     "",
+    "Supporting literature (grouped by evidence tier):",
+    literatureBlock,
+    "",
+    "Counter-evidence (papers describing failure / futility / toxicity / withdrawal):",
+    counterBlock,
+    "",
     "Return:",
-    "  - score: 0-100 (0 = no plausible mechanism / unrelated; 50 = indirect",
-    "    support / weak path; 100 = direct, well-supported by KG path)",
-    "  - rationale: 2-3 sentences referencing the specific path or, if no",
-    "    path was found, why the score is low.",
+    "  - score: 0-100. Weight Tier-1 strongly; Tier-2 moderately; Tier-3 lightly.",
+    "    KG-only support without literature: cap at ~55. Strong Tier-1 support:",
+    "    can reach 100. Strong counter-evidence: significantly reduce score.",
+    "  - rationale: 2-3 sentences combining KG path + literature into a",
+    "    biological argument.",
+    "  - evidence: 2-4 entries. Each must:",
+    "      - pmid: a PMID actually present above (do NOT invent)",
+    "      - quote: short verbatim excerpt from that paper's abstract (≤200 chars)",
+    "      - supports: 'yes' / 'weak' / 'no'",
+    "    Include at least one counter-evidence quote (supports: 'no') if any",
+    "    counter-evidence is present.",
+    "  - counterEvidenceAddressed: if counter-evidence is present, one sentence",
+    "    on whether/how it changes the score. Omit if no counter-evidence.",
   ].join("\n");
+}
+
+function groupByTier(cits: Citation[]): Record<EvidenceTier, Citation[]> {
+  const out: Record<EvidenceTier, Citation[]> = { 1: [], 2: [], 3: [] };
+  for (const c of cits) {
+    out[tierForCitation(c)].push(c);
+  }
+  return out;
+}
+
+function formatTier(cits: Citation[], opts: { showAbstract: boolean }): string {
+  if (cits.length === 0) return "  (none)";
+  return cits.map((c) => formatCitation(c, opts)).join("\n\n");
+}
+
+function formatCitation(c: Citation, opts: { showAbstract: boolean }): string {
+  const lines = [
+    `  [${c.pmid}] ${c.title}`,
+    `  Pubtype: ${c.pubtype.join(", ") || "(none)"}`,
+  ];
+  if (opts.showAbstract) {
+    lines.push(`  Abstract excerpt: ${c.abstractExcerpt ?? "(unavailable)"}`);
+  }
+  return lines.join("\n");
 }
 
 function patientLine(p: PatientProfile): string {

@@ -121,7 +121,14 @@ async function runPathB(
   const kgPaths = await collectPaths(state);
   try {
     const { score, rationale } = await judgeScore.invoke(
-      mechanismScorePrompt(state.patientProfile, state.candidate, state.mechanisms, kgPaths),
+      mechanismScorePrompt(
+        state.patientProfile,
+        state.candidate,
+        state.mechanisms,
+        kgPaths,
+        state.literatureSupport,
+        state.counterEvidence,
+      ),
     );
     return { mechanismScore: score, mechanismRationale: rationale };
   } catch (err) {
