@@ -55,6 +55,7 @@ function stateWith(overrides: Partial<AgentStateType>): AgentStateType {
     repurposingCandidates: [],
     searchStrategy: null,
     candidates: [],
+    candidateDrops: [],
     matches: [],
     attempts: 0,
     approvalRequest: null,

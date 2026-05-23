@@ -1,0 +1,48 @@
+{
+  "studies": [
+    {
+      "protocolSection": {
+        "identificationModule": {
+          "nctId": "NCT00000001",
+          "briefTitle": "A Study of Drug X in Type 2 Diabetes"
+        },
+        "statusModule": {
+          "overallStatus": "RECRUITING"
+        },
+        "descriptionModule": {
+          "briefSummary": "Phase 2 trial of drug X for adults with T2DM."
+        },
+        "conditionsModule": {
+          "conditions": ["Type 2 Diabetes Mellitus"]
+        },
+        "designModule": {
+          "phases": ["PHASE2"]
+        },
+        "armsInterventionsModule": {
+          "interventions": [
+            { "type": "DRUG", "name": "Drug X" },
+            { "type": "DRUG", "name": "Metformin" }
+          ]
+        },
+        "eligibilityModule": {
+          "eligibilityCriteria": "Inclusion: adults 18-75 with T2DM.\nExclusion: pregnancy.",
+          "minimumAge": "18 Years",
+          "maximumAge": "75 Years",
+          "stdAges": ["ADULT", "OLDER_ADULT"],
+          "sex": "ALL"
+        },
+        "contactsLocationsModule": {
+          "locations": [
+            {
+              "facility": "Site A",
+              "city": "Boston",
+              "state": "MA",
+              "country": "United States",
+              "status": "RECRUITING"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

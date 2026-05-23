@@ -66,6 +66,17 @@ export function isActiveCondition(c: { clinicalStatus?: string }): boolean {
   return (ACTIVE_CONDITION_STATUSES as Set<string>).has(c.clinicalStatus);
 }
 
+// Returns true when a medication has at least one event with an
+// ongoing status. Used by prompts that want to include only currently
+// active drugs, not historical ones (which surface via priorTreatments).
+export function isActiveMedication(m: {
+  events: Array<{ status?: string }>;
+}): boolean {
+  return m.events.some(
+    (e) => e.status === "active" || e.status === "in-progress",
+  );
+}
+
 export const PatientProfileSchema = z.object({
   id: z.string(),
   displayName: z.string(),
