@@ -37,6 +37,7 @@ type EsummaryEntry = {
   uid?: string;
   title?: string;
   pubdate?: string;
+  pubtype?: string[];
   articleids?: Array<{ idtype?: string; value?: string }>;
 };
 
@@ -89,6 +90,7 @@ function toCitation(pmid: string, entry: EsummaryEntry): Citation {
     title: entry.title ?? "(no title)",
     year: parseYear(entry.pubdate),
     url: `${PUBMED_BASE}/${pmid}/`,
+    pubtype: entry.pubtype ?? [],
   };
 }
 

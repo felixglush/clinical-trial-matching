@@ -4,6 +4,7 @@ import type {
   TrialCandidate,
   TrialMatch,
   Mechanism,
+  MechanismEvidenceItem,
   RepurposingCandidate,
   Citation,
   EligibilityAssessment,
@@ -36,6 +37,18 @@ export const TrialEvalState = Annotation.Root({
   literatureSupport: Annotation<Citation[]>({
     reducer: (_prev, next) => next,
     default: () => [],
+  }),
+  counterEvidence: Annotation<Citation[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  mechanismEvidence: Annotation<MechanismEvidenceItem[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  counterEvidenceAddressed: Annotation<string | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
   }),
   evidenceAttempts: Annotation<number>({
     reducer: (_prev, next) => next,

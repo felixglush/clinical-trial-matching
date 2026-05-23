@@ -50,7 +50,7 @@ function elig(overall: EligibilityAssessment["overall"]): EligibilityAssessment 
 }
 
 function citation(pmid: string, title: string): Citation {
-  return { pmid, title, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` };
+  return { pmid, title, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`, pubtype: [] };
 }
 
 function input(overrides: Partial<MatchNarrationInput> = {}): MatchNarrationInput {

@@ -50,6 +50,13 @@ export const TrialCandidateSchema = z.object({
 });
 export type TrialCandidate = z.infer<typeof TrialCandidateSchema>;
 
+export const MechanismEvidenceItemSchema = z.object({
+  pmid: z.string(),
+  quote: z.string(),
+  supports: z.enum(["yes", "weak", "no"]),
+});
+export type MechanismEvidenceItem = z.infer<typeof MechanismEvidenceItemSchema>;
+
 export const TrialMatchSchema = TrialCandidateSchema.extend({
   score: z.number().min(0).max(100),
   summary: z.string(),
@@ -59,6 +66,8 @@ export const TrialMatchSchema = TrialCandidateSchema.extend({
   literatureSupport: z.array(CitationSchema),
   repurposingRationale: RepurposingRationaleSchema.nullable(),
   concerns: z.array(z.string()),
+  mechanismEvidence: z.array(MechanismEvidenceItemSchema).default([]),
+  counterEvidenceAddressed: z.string().nullable().default(null),
 });
 export type TrialMatch = z.infer<typeof TrialMatchSchema>;
 

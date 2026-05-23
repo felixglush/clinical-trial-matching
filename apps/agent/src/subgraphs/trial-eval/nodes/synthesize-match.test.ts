@@ -44,7 +44,7 @@ function elig(overall: EligibilityAssessment["overall"]): EligibilityAssessment 
 }
 
 function citation(pmid: string): Citation {
-  return { pmid, title: `t${pmid}`, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` };
+  return { pmid, title: `t${pmid}`, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`, pubtype: [] };
 }
 
 function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType {
@@ -68,6 +68,9 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     mechanismRationale: "Drug X targets the relevant pathway.",
     literatureSupport: [citation("1"), citation("2"), citation("3")],
     evidenceAttempts: 1,
+    counterEvidence: [],
+    mechanismEvidence: [],
+    counterEvidenceAddressed: null,
     matches: [],
     ...overrides,
   };

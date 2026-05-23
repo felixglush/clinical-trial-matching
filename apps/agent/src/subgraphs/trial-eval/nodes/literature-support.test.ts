@@ -13,7 +13,7 @@ import * as pubmed from "../../../tools/pubmed.js";
 afterEach(() => vi.restoreAllMocks());
 
 function citation(pmid: string, title = `t${pmid}`): Citation {
-  return { pmid, title, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/` };
+  return { pmid, title, url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`, pubtype: [] };
 }
 
 function mech(conditionName: string, pathway?: string): Mechanism {
@@ -70,6 +70,9 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     mechanismRationale: null,
     literatureSupport: [],
     evidenceAttempts: 0,
+    counterEvidence: [],
+    mechanismEvidence: [],
+    counterEvidenceAddressed: null,
     matches: [],
     ...overrides,
   };

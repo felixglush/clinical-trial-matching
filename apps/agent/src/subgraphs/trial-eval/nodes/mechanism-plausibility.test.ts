@@ -99,6 +99,9 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     mechanismRationale: null,
     literatureSupport: [],
     evidenceAttempts: 0,
+    counterEvidence: [],
+    mechanismEvidence: [],
+    counterEvidenceAddressed: null,
     matches: [],
     ...overrides,
   };

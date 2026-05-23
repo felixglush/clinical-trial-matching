@@ -94,6 +94,12 @@ export async function synthesizeMatch(
     literatureSupport: state.literatureSupport,
     repurposingRationale,
     concerns,
+    // v1.5 fields — populated in Task 6 (mechanism-plausibility node update)
+    // and Task 8 (the PMID-echo filter). For now, pass through from state
+    // unchanged so the parent receives whatever the subgraph wrote (or
+    // defaults `[]` / `null` from the state annotation).
+    mechanismEvidence: state.mechanismEvidence,
+    counterEvidenceAddressed: state.counterEvidenceAddressed,
   };
   // Wrap in a single-element array so the subgraph's `matches` field
   // (concat reducer) propagates back to the parent graph's `matches`
