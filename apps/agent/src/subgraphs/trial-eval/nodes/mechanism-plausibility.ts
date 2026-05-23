@@ -120,7 +120,7 @@ async function runPathB(
 ): Promise<Partial<TrialEvalStateType>> {
   const kgPaths = await collectPaths(state);
   try {
-    const { score, rationale } = await judgeScore.invoke(
+    const judgment = await judgeScore.invoke(
       mechanismScorePrompt(
         state.patientProfile,
         state.candidate,
@@ -130,12 +130,22 @@ async function runPathB(
         state.counterEvidence,
       ),
     );
-    return { mechanismScore: score, mechanismRationale: rationale };
+    return {
+      mechanismScore: judgment.score,
+      mechanismRationale: judgment.rationale,
+      mechanismEvidence: judgment.evidence,
+      counterEvidenceAddressed: judgment.counterEvidenceAddressed ?? null,
+    };
   } catch (err) {
     console.warn(
       `mechanism-plausibility (Path B): LLM failed for ${state.candidate.nctId}: ${errorMessage(err)} (null score)`,
     );
-    return { mechanismScore: null, mechanismRationale: null };
+    return {
+      mechanismScore: null,
+      mechanismRationale: null,
+      mechanismEvidence: [],
+      counterEvidenceAddressed: null,
+    };
   }
 }
 
