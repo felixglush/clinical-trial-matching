@@ -28,6 +28,7 @@
           "eligibilityCriteria": "Inclusion: adults 18-75 with T2DM.\nExclusion: pregnancy.",
           "minimumAge": "18 Years",
           "maximumAge": "75 Years",
+          "stdAges": ["ADULT", "OLDER_ADULT"],
           "sex": "ALL"
         },
         "contactsLocationsModule": {

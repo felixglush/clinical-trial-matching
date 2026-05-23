@@ -125,11 +125,13 @@ Each candidate carries provenance: `discoveredVia: ("strategy"|"repurposing")[]`
 
 Two-stage filter that cuts the candidate list from ~50–200 down to ~10–30 before the expensive `trial-eval` fan-out.
 
-Stage 1 — deterministic gates (no LLM): drops on non-enrolling status, age outside the trial's `minimumAge`/`maximumAge` window, sex mismatch, or patient deceased.
+Stage 1 — deterministic gates (no LLM): drops on non-enrolling status, age mismatch, sex mismatch, or patient deceased.
+
+Age is checked in two passes. First, a **categorical gate** on CT.gov's `stdAges` buckets (`CHILD`/`ADULT`/`OLDER_ADULT`): if the patient's bucket is disjoint from the trial's allowed buckets, drop with directional reason (above-range → `age-too-old`, below-range → `age-too-young`). This is resistant to numeric-parsing edge cases (e.g. `maximumAge: "48 Hours"` neonate trials). Second, a **numeric gate** on the parsed `minimumAgeYears`/`maximumAgeYears` for boundary cases within the same bucket. See `docs/ctgov-api-shape.md` for the field shapes.
 
 Stage 2 — LLM-as-judge (Haiku, structured output): per Stage-1 survivor, the model returns `{keep, reason}`. The prompt instructs the model to keep when in doubt — false-negatives here are expensive (the trial vanishes from the run), false-positives are cheap (the downstream `trial-eval` eligibility node will catch them).
 
-Every drop — Stage 1 or Stage 2 — produces an entry in `state.candidateDrops` with `{nctId, title, reason, stage, detail}` for audit display. LLM call failures are treated as keep (lenient) and do not produce a drop entry.
+Every drop — Stage 1 or Stage 2 — produces an entry in `state.candidateDrops` with `{nctId, title, reason, stage, detail}` for audit display. The `detail` is the raw CT.gov string for numeric age drops (`"75 Years"`), the bucket list for categorical age drops (`"CHILD"`), and the overall status / sex eligibility / LLM reason for the other gates. LLM call failures are treated as keep (lenient) and do not produce a drop entry.
 
 ### `routeAfterPreFilter` (routing function, not a node)
 

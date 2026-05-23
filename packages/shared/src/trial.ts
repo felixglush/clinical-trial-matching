@@ -23,8 +23,23 @@ export const TrialCandidateSchema = z.object({
   eligibilityCriteriaText: z.string().optional(),
   locations: z.array(TrialLocationSchema),
   // Structured eligibility fields used by pre-filter Stage 1.
-  minimumAge: z.string().optional(),      // CT.gov format: "18 Years"
+  //
+  // Age is represented twice on purpose: the raw CT.gov strings power
+  // human-readable drop labels ("Age below minimum: 18 Years") while the
+  // parsed-at-ingest numerics drive logic. Pre-filter trusts the
+  // numerics. See `apps/agent/src/util/ctgov.ts#parseAgeYears` and
+  // docs/ctgov-api-shape.md for the unit list.
+  minimumAge: z.string().optional(),      // raw CT.gov format, e.g. "18 Years"
   maximumAge: z.string().optional(),
+  minimumAgeYears: z.number().nonnegative().optional(),
+  maximumAgeYears: z.number().nonnegative().optional(),
+  // CT.gov's pre-bucketed age categories. Drives pre-filter's coarse
+  // disjointness gate before the numeric compare — protects against
+  // unparseable units (e.g. "48 Hours") slipping through.
+  //   CHILD       = 0–17
+  //   ADULT       = 18–64
+  //   OLDER_ADULT = 65+
+  stdAges: z.array(z.enum(["CHILD", "ADULT", "OLDER_ADULT"])).default([]),
   sexEligibility: z.enum(["ALL", "MALE", "FEMALE"]).optional(),
   // Provenance. Every candidate is discovered via at least one channel.
   // `repurposingDrugIds` is empty when only the strategy channel surfaced

@@ -12,10 +12,19 @@
  * the gate that fired (raw status, parsed age string, etc.).
  *
  *   - status not enrolling-ish    → drop "not-recruiting"
+ *   - patient's stdAges bucket
+ *     disjoint from trial's       → drop "age-too-young" or "age-too-old"
  *   - patient age < minimumAge    → drop "age-too-young"
  *   - patient age > maximumAge    → drop "age-too-old"
  *   - sex mismatch                → drop "sex-mismatch"
  *   - patient deceased            → drop "deceased" (catches everything)
+ *
+ * Two-tier age check: the categorical `stdAges` gate runs first. CT.gov
+ * pre-buckets every study into CHILD / ADULT / OLDER_ADULT, which is
+ * resistant to the kinds of unit-parsing failures the numeric path can
+ * have (e.g. `maximumAge: "48 Hours"` on a neonate trial). Numeric
+ * `minimumAgeYears` / `maximumAgeYears` (parsed at ingest in
+ * tools/clinicaltrials.ts) catch boundary cases within the same bucket.
  *
  * Missing / unparseable structured fields skip the gate (lenient).
  *
@@ -52,7 +61,7 @@ import {
 import type { AgentStateType } from "../state.js";
 import { mapWithConcurrency } from "../util/concurrency.js";
 import { errorMessage } from "../util/error.js";
-import { isEnrollingStatus, parseAgeYears } from "../util/ctgov.js";
+import { isEnrollingStatus } from "../util/ctgov.js";
 
 const STAGE2_CONCURRENCY = 10;
 
@@ -110,6 +119,21 @@ export async function preFilter(
   return { candidates: kept, candidateDrops: drops };
 }
 
+// CT.gov's three bucket ordering: 0=CHILD (0–17), 1=ADULT (18–64),
+// 2=OLDER_ADULT (65+). Numeric ordering lets us detect "trial buckets
+// all above patient" (too young) vs "all below" (too old).
+const STD_AGE_ORDER: Record<"CHILD" | "ADULT" | "OLDER_ADULT", number> = {
+  CHILD: 0,
+  ADULT: 1,
+  OLDER_ADULT: 2,
+};
+
+function patientStdAge(ageYears: number): "CHILD" | "ADULT" | "OLDER_ADULT" {
+  if (ageYears < 18) return "CHILD";
+  if (ageYears < 65) return "ADULT";
+  return "OLDER_ADULT";
+}
+
 function stage1Drop(
   c: TrialCandidate,
   profile: PatientProfile,
@@ -120,12 +144,29 @@ function stage1Drop(
   if (!isEnrollingStatus(c.status)) {
     return drop(c, "not-recruiting", "stage1", c.status);
   }
-  const minAge = parseAgeYears(c.minimumAge);
-  if (minAge !== undefined && profile.ageYears < minAge) {
+  if (c.stdAges.length > 0) {
+    const patientBucket = patientStdAge(profile.ageYears);
+    if (!c.stdAges.includes(patientBucket)) {
+      const patientRank = STD_AGE_ORDER[patientBucket];
+      const trialRanks = c.stdAges.map((b) => STD_AGE_ORDER[b]);
+      const detail = c.stdAges.join(",");
+      // All trial buckets younger than patient → patient too old.
+      if (Math.max(...trialRanks) < patientRank) {
+        return drop(c, "age-too-old", "stage1", detail);
+      }
+      // All trial buckets older than patient → patient too young.
+      if (Math.min(...trialRanks) > patientRank) {
+        return drop(c, "age-too-young", "stage1", detail);
+      }
+      // Mixed disjoint (rare — would mean trial allows e.g. CHILD and
+      // OLDER_ADULT but not ADULT, and patient is ADULT). Fall through
+      // to numeric / LLM rather than guess a direction.
+    }
+  }
+  if (c.minimumAgeYears !== undefined && profile.ageYears < c.minimumAgeYears) {
     return drop(c, "age-too-young", "stage1", c.minimumAge);
   }
-  const maxAge = parseAgeYears(c.maximumAge);
-  if (maxAge !== undefined && profile.ageYears > maxAge) {
+  if (c.maximumAgeYears !== undefined && profile.ageYears > c.maximumAgeYears) {
     return drop(c, "age-too-old", "stage1", c.maximumAge);
   }
   if (

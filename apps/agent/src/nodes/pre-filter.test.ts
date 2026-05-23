@@ -46,6 +46,7 @@ function candidate(overrides: Partial<TrialCandidate> = {}): TrialCandidate {
     interventions: [],
     status: "RECRUITING",
     locations: [],
+    stdAges: [],
     discoveredVia: ["strategy"],
     repurposingDrugIds: [],
     ...overrides,
@@ -91,32 +92,105 @@ describe("preFilter", () => {
     });
   });
 
-  it("drops on minimumAge above patient age (stage1)", async () => {
+  it("drops on minimumAgeYears above patient age (stage1, numeric gate)", async () => {
     const out = await preFilter(
       makeState({
-        patientProfile: profile({ ageYears: 12 }),
-        candidates: [candidate({ nctId: "NCT_ADULT", minimumAge: "18 Years" })],
+        patientProfile: profile({ ageYears: 19 }),
+        candidates: [
+          candidate({
+            nctId: "NCT_OLDER",
+            minimumAge: "21 Years",
+            minimumAgeYears: 21,
+            stdAges: ["ADULT"],
+          }),
+        ],
       }),
     );
     expect(out.candidates).toEqual([]);
     expect(out.candidateDrops![0]).toMatchObject({
-      nctId: "NCT_ADULT",
+      nctId: "NCT_OLDER",
       reason: "age-too-young",
       stage: "stage1",
-      detail: "18 Years",
+      detail: "21 Years",
     });
   });
 
-  it("drops on maximumAge below patient age (stage1)", async () => {
+  it("drops on maximumAgeYears below patient age (stage1, numeric gate)", async () => {
     const out = await preFilter(
       makeState({
-        patientProfile: profile({ ageYears: 80 }),
-        candidates: [candidate({ nctId: "NCT_KID", maximumAge: "75 Years" })],
+        patientProfile: profile({ ageYears: 50 }),
+        candidates: [
+          candidate({
+            nctId: "NCT_YOUNG_ADULT",
+            maximumAge: "40 Years",
+            maximumAgeYears: 40,
+            stdAges: ["ADULT"],
+          }),
+        ],
       }),
     );
     expect(out.candidateDrops![0]).toMatchObject({
       reason: "age-too-old",
-      detail: "75 Years",
+      detail: "40 Years",
+    });
+  });
+
+  it("drops via stdAges disjointness when patient bucket is above trial range", async () => {
+    const out = await preFilter(
+      makeState({
+        patientProfile: profile({ ageYears: 60 }),
+        candidates: [candidate({ nctId: "NCT_CHILD", stdAges: ["CHILD"] })],
+      }),
+    );
+    expect(out.candidates).toEqual([]);
+    expect(out.candidateDrops![0]).toMatchObject({
+      nctId: "NCT_CHILD",
+      reason: "age-too-old",
+      stage: "stage1",
+      detail: "CHILD",
+    });
+  });
+
+  it("drops via stdAges disjointness when patient bucket is below trial range", async () => {
+    const out = await preFilter(
+      makeState({
+        patientProfile: profile({ ageYears: 12 }),
+        candidates: [
+          candidate({ nctId: "NCT_SENIOR", stdAges: ["OLDER_ADULT"] }),
+        ],
+      }),
+    );
+    expect(out.candidateDrops![0]).toMatchObject({
+      nctId: "NCT_SENIOR",
+      reason: "age-too-young",
+      detail: "OLDER_ADULT",
+    });
+  });
+
+  it("drops a newborn-only trial via stdAges alone, even with no numeric age data", async () => {
+    // The asymmetric bug the schema refactor is meant to fix: a neonate
+    // trial whose maximumAge unit fails to parse (e.g. "48 Hours") used
+    // to slip through to LLM with no numeric upper bound. With stdAges,
+    // the categorical gate drops it before numeric parsing matters.
+    // No `minimumAgeYears`/`maximumAgeYears` are set on the candidate so
+    // this test exercises the categorical gate in isolation.
+    const out = await preFilter(
+      makeState({
+        patientProfile: profile({ ageYears: 60 }),
+        candidates: [
+          candidate({
+            nctId: "NCT_NEWBORN",
+            stdAges: ["CHILD"],
+            maximumAge: "48 Hours", // raw display string; not parsed by pre-filter
+          }),
+        ],
+      }),
+    );
+    expect(out.candidates).toEqual([]);
+    expect(out.candidateDrops![0]).toMatchObject({
+      reason: "age-too-old",
+      stage: "stage1",
+      detail: "CHILD",
     });
   });
 

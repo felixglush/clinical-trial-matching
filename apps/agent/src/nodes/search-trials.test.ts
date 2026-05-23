@@ -40,6 +40,7 @@ function trial(nctId: string): TrialCandidate {
     interventions: [],
     status: "RECRUITING",
     locations: [],
+    stdAges: [],
     // The tool returns these as undefined; assertions on them happen in
     // tool tests, not here.
     discoveredVia: ["strategy"],

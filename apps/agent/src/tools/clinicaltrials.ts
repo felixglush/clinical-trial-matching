@@ -38,6 +38,7 @@ import type {
   TrialCandidate,
   TrialLocation,
 } from "@clinical-trial-matching/shared";
+import { parseAgeYears } from "../util/ctgov.js";
 
 const BASE_URL = "https://clinicaltrials.gov/api/v2/studies";
 const DEFAULT_PAGE_SIZE = 50;
@@ -56,6 +57,7 @@ const FIELDS = [
   "protocolSection.eligibilityModule.eligibilityCriteria",
   "protocolSection.eligibilityModule.minimumAge",
   "protocolSection.eligibilityModule.maximumAge",
+  "protocolSection.eligibilityModule.stdAges",
   "protocolSection.eligibilityModule.sex",
   "protocolSection.contactsLocationsModule.locations",
 ].join("|");
@@ -143,6 +145,7 @@ type CtgStudy = {
       eligibilityCriteria?: string;
       minimumAge?: string;
       maximumAge?: string;
+      stdAges?: string[];
       sex?: string;
     };
     contactsLocationsModule?: {
@@ -180,6 +183,14 @@ function toTrialCandidate(study: CtgStudy): TrialCandidate {
   const sexEligibility =
     sex === "ALL" || sex === "MALE" || sex === "FEMALE" ? sex : undefined;
 
+  const minimumAge = p.eligibilityModule?.minimumAge;
+  const maximumAge = p.eligibilityModule?.maximumAge;
+  const rawStdAges = p.eligibilityModule?.stdAges ?? [];
+  const stdAges = rawStdAges.filter(
+    (s): s is "CHILD" | "ADULT" | "OLDER_ADULT" =>
+      s === "CHILD" || s === "ADULT" || s === "OLDER_ADULT",
+  );
+
   // Cast: discoveredVia / repurposingDrugIds intentionally omitted here;
   // the search-trials node attaches them. Keeping them off the tool's
   // output keeps responsibilities clean.
@@ -193,8 +204,11 @@ function toTrialCandidate(study: CtgStudy): TrialCandidate {
     status: p.statusModule?.overallStatus ?? "",
     eligibilityCriteriaText: p.eligibilityModule?.eligibilityCriteria,
     locations,
-    minimumAge: p.eligibilityModule?.minimumAge,
-    maximumAge: p.eligibilityModule?.maximumAge,
+    minimumAge,
+    maximumAge,
+    minimumAgeYears: parseAgeYears(minimumAge),
+    maximumAgeYears: parseAgeYears(maximumAge),
+    stdAges,
     sexEligibility,
   } as TrialCandidate;
 }

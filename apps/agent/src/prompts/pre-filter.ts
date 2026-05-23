@@ -27,7 +27,12 @@ import {
   type TrialCandidate,
 } from "@clinical-trial-matching/shared";
 
-export const ELIGIBILITY_EXCERPT_CHARS = 2000;
+// Sampled from 200 real CT.gov studies: p50 length 825 chars, p75 1597,
+// p90 3172. The Exclusion section (where the prompt's "obvious blocker"
+// signals live) starts after 2000 chars in ~4% of trials; raising to
+// 4000 cuts that to ~1%. Trade is +~500 tokens for the long tail; Haiku
+// makes that trivial. Past 4000 the curve flattens.
+export const ELIGIBILITY_EXCERPT_CHARS = 4000;
 
 export const PreFilterJudgmentSchema = z.object({
   keep: z.boolean(),

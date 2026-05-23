@@ -15,6 +15,26 @@ describe("parseAgeYears", () => {
   it("parses N Months as a fractional year", () => {
     expect(parseAgeYears("6 Months")).toBeCloseTo(0.5, 5);
     expect(parseAgeYears("24 Months")).toBeCloseTo(2, 5);
+    expect(parseAgeYears("1 Month")).toBeCloseTo(1 / 12, 5);
+  });
+
+  it("parses N Weeks as a fractional year", () => {
+    expect(parseAgeYears("2 Weeks")).toBeCloseTo(2 / 52.1775, 5);
+    expect(parseAgeYears("1 Week")).toBeCloseTo(1 / 52.1775, 5);
+  });
+
+  it("parses N Days as a fractional year", () => {
+    expect(parseAgeYears("28 Days")).toBeCloseTo(28 / 365.25, 5);
+    expect(parseAgeYears("1 Day")).toBeCloseTo(1 / 365.25, 5);
+  });
+
+  it("parses N Hours as a fractional year (newborn-only trials)", () => {
+    expect(parseAgeYears("48 Hours")).toBeCloseTo(48 / (365.25 * 24), 5);
+    expect(parseAgeYears("1 Hour")).toBeCloseTo(1 / (365.25 * 24), 5);
+  });
+
+  it("parses N Minutes as a fractional year (moment-of-birth trials)", () => {
+    expect(parseAgeYears("1 Minute")).toBeCloseTo(1 / (365.25 * 24 * 60), 5);
   });
 
   it("returns undefined for N/A", () => {

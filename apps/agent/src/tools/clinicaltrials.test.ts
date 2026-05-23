@@ -28,6 +28,9 @@ describe("searchClinicalTrials", () => {
     expect(t!.interventions).toEqual(["Drug X", "Metformin"]);
     expect(t!.minimumAge).toBe("18 Years");
     expect(t!.maximumAge).toBe("75 Years");
+    expect(t!.minimumAgeYears).toBe(18);
+    expect(t!.maximumAgeYears).toBe(75);
+    expect(t!.stdAges).toEqual(["ADULT", "OLDER_ADULT"]);
     expect(t!.sexEligibility).toBe("ALL");
     expect(t!.eligibilityCriteriaText).toContain("Inclusion: adults");
     expect(t!.locations).toHaveLength(1);

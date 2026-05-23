@@ -49,6 +49,7 @@ function candidate(overrides: Partial<TrialCandidate> = {}): TrialCandidate {
     interventions: ["Drug X"],
     status: "RECRUITING",
     locations: [],
+    stdAges: [],
     eligibilityCriteriaText:
       "Inclusion: age 18-75 with T2DM\nExclusion: prior insulin therapy",
     discoveredVia: ["strategy"],
