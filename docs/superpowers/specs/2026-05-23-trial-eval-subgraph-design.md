@@ -31,9 +31,9 @@ Take one `TrialCandidate` (with `discoveredVia` provenance), the patient's `Pati
 The match must:
 
 1. **Reflect eligibility honestly.** Per-criterion verdicts (`yes`/`no`/`unknown`) against the trial's free-form inclusion/exclusion text, plus a deterministic PrimeKG safety check for trial-intervention vs. patient-condition contraindications.
-2. **Score mechanism plausibility against the KG, not just the LLM's instincts.** Pull sample paths between trial interventions and the patient's conditions; if the candidate came from the repurposing channel, also feed the source RepurposingCandidate's `supportingPaths`. The LLM scores plausibility with those paths in the prompt — not freestyle.
+2. **Score mechanism plausibility by the right source for the channel.** Repurposing-channel trials inherit the upstream TxGNN `predIndication` score (re-running an LLM-with-KG-paths check duplicates work TxGNN already did against the same drug-disease pair). Strategy-channel trials — surfaced by lexical CT.gov keyword match, with no biology vetted upstream — get the full `pathBetween` + LLM scoring pass. See *Channel-aware behavior* in `mechanism-plausibility` below.
 3. **Cite literature.** Two PubMed attempts max; broaden on retry; union citations across attempts (dedupe by pmid).
-4. **Compose a single, reproducible score.** Formula (eligibility + mechanism + literature, weighted) computes the number. LLM narrates the `summary` and `concerns`.
+4. **Compose a reproducible sort key, not a clinical verdict.** The `TrialMatch.score` is a single 0–100 number, but it's a *sort key* — the audit surface is the per-pillar fields already on `TrialMatch` (`eligibility.overall`, `mechanismScore`, `literatureSupport.length`, `concerns`). UI / `rank-and-synthesize` should present those pillars as first-class badges; the combined score is what we sort by, not the clinical judgment we hand to the reviewer. The formula gates on eligibility to prevent absurd orderings (an ineligible patient cannot score above 25 regardless of biology).
 5. **Carry repurposing provenance through.** When `candidate.discoveredVia.includes("repurposing")`, populate `TrialMatch.repurposingRationale` from the source RepurposingCandidate.
 6. **Never fail to produce a match.** A degraded match with `concerns` flagged is always better than no match — the parent's `matches` reducer is concat, and a missing element silently shrinks the count.
 
@@ -42,15 +42,16 @@ The match must:
 | Decision | Choice | Rationale |
 |---|---|---|
 | Subgraph state | Reuse the existing annotation in `subgraphs/trial-eval/state.ts` as-is | All fields already present; no additions needed. |
+| `score` semantics | Sort key, not a clinical verdict. Per-pillar fields (`eligibility.overall`, `mechanismScore`, `literatureSupport.length`, `concerns`) are the audit surface. | A single number invites being read as a recommendation. The clinician needs the breakdown; ranking just needs a deterministic order. |
 | Score composition | **Hybrid: formula computes `score`; LLM narrates `summary` + `concerns`** | Reproducible audit trail; tunable weights; LLM can't quietly drift the ranking. LLM still earns its keep on the narrative. |
-| Score formula | `score = 0.5·eligibilityScore + 0.3·mechanismScore + 0.2·literatureScore` | Eligibility dominates because an ineligible patient can't enroll regardless of biology. Mechanism > literature because mechanism is patient-specific while citations are population-level evidence. Weights are tunable knobs; revisit after first runs. |
-| Eligibility sub-score | `eligible→100, likely_eligible→75, unclear→50, likely_ineligible→25, ineligible→0` | Maps the LLM's coarse 5-level enum to the 0–100 component score. |
-| Mechanism sub-score | LLM-produced 0–100 in `mechanism-plausibility`; null → 50 (neutral) with a concern | LLM has the KG paths in front of it; this is the right place for the numeric call. Null on failure surfaces as "mechanism evaluation unavailable" rather than fabricating a number. |
+| Score formula | Eligibility-gated weighted sum: `ineligible → 0`; `likely_ineligible → min(25, weightedSum)`; otherwise `weightedSum = 0.5·E + 0.3·M + 0.2·L` | A pure weighted sum lets `(ineligible=0, mechanism=80, literature=80)` score ~40 — looks "marginal," should be 0. The gate enforces that an unenrollable patient can't outrank an enrollable one regardless of biology. Eligibility shifts from "one of three weights" to "permission to be scored." |
+| Eligibility sub-score | `eligible→100, likely_eligible→75, unclear→50, likely_ineligible→25, ineligible→0` (the latter two only feed the gate, not the weighted sum) | Maps the LLM's coarse 5-level enum to the 0–100 component score. |
+| Mechanism sub-score | Channel-dependent: see *Channel-aware behavior* in `mechanism-plausibility`. Repurposing → TxGNN `predIndication × 100`. Strategy → LLM-produced 0–100. Null → 50 (neutral) with a concern. | The right source for each channel; avoids re-deriving TxGNN's signal with a thinner LLM-with-KG-paths pass. |
 | Literature sub-score | `clamp(0, 100, citations.length × 25)` (so 4+ citations = 100) | Citation count is a noisy proxy for evidence weight; saturating at 4 keeps the literature component from dominating long-tail trials with shallow PubMed footprints. |
 | Safety step | Deterministic Cypher `(drug)-[:contraindication]-(disease)` inside `eligibility-check`, **before** the LLM call | Belongs with eligibility, not a separate node. `side_effect` edges are not in the subset (dropped by `kg:build-subset`); the drug-eval v2 spec's reference to them is corrected here. |
 | Drug-name resolution | Lowercased + formulation-suffix-stripped exact match against a one-time-cached PrimeKG drug-name index | Brittle but bounded; same trade-off the drug-eval v2 spec already accepted. Unresolved interventions are warn-logged, not errored. |
-| `mechanism-plausibility` KG step | `kg.pathBetween(drugNodeId, diseaseNodeId, maxHops=3)` per (intervention, condition) pair, capped at `MAX_KG_PATHS_PER_PROMPT = 6` total | 3 hops covers `drug–[target]–gene–[associated with]–disease` and one extra step for repurposing. The total cap protects prompt size; per-pair LIMIT in Cypher protects Neo4j cost. |
-| Repurposing context in `mechanism-plausibility` | When `candidate.discoveredVia.includes("repurposing")` AND the source RepurposingCandidate has `supportingPaths`, include those paths in the LLM prompt as **additional** evidence alongside `pathBetween` results | The TxGNN explainer path is per-disease, not per-drug-vs-patient, so it's an extra signal — not a replacement. |
+| `mechanism-plausibility` channel split | Repurposing-channel trials skip the LLM scoring pass and use TxGNN's `predIndication` directly; LLM is invoked only to narrate `mechanismRationale` from `supportingPaths`. Strategy-channel trials run the full `pathBetween` + LLM scoring pass. Both-channel trials (TxGNN score takes precedence; `pathBetween` augments the rationale prompt). | TxGNN already ranked the drug for the patient's MONDO upstream — re-scoring with 3 KG paths and an LLM duplicates work and risks signal drift between the two scoring sources. Strategy-channel matches are lexical CT.gov keyword hits with no upstream biology check, so they need the full pass. |
+| `mechanism-plausibility` KG step (strategy channel only) | `kg.pathBetween(drugNodeId, diseaseNodeId, maxHops=3)` per (intervention, condition) pair, capped at `MAX_KG_PATHS_PER_PROMPT = 6` total | 3 hops covers `drug–[target]–gene–[associated with]–disease` and one extra step. The total cap protects prompt size; per-pair LIMIT in Cypher protects Neo4j cost. |
 | Literature query construction | First attempt: `(${drug names join OR}) AND ${primary condition} AND ${mechanism keyword}`. Second attempt (broaden): drop the mechanism keyword. | One LLM-free query construction; mechanism keyword is the most likely false-negative. |
 | Literature accumulation | Node-level dedupe-merge by `pmid` against the prior attempt; reducer stays replace | Replace reducer + node-level merge keeps the state contract simple while preventing a second-attempt-with-fewer-hits regression. |
 | `synthesize-match` LLM call | Pass deterministic sub-scores + sub-rationales + the computed total; LLM returns `{ summary: string, concerns: string[] }` only | LLM doesn't touch the score; it narrates. Concerns array is structured (not free-text in summary) so the UI can render badges. |
@@ -87,17 +88,26 @@ The match must:
         │ mechanism-          │
         │ plausibility        │
         │                     │
-        │  1. KG pathBetween  │
-        │     per (interv,    │
-        │     condition) pair │  → KGPath[]
+        │  channel-aware:     │
         │                     │
-        │  2. (repurposing    │
-        │     only) inject    │
-        │     source RC's     │
-        │     supportingPaths │
+        │  Path A (repurpos): │
+        │   1. score =        │
+        │      TxGNN          │
+        │      predIndication │
+        │      × 100          │
+        │   2. LLM narrates   │
+        │      rationale from │
+        │      supporting-    │
+        │      Paths          │
         │                     │
-        │  3. LLM scores      │  → { score: 0..100,
-        │     plausibility    │      rationale: string }
+        │  Path B (strategy): │
+        │   1. KG pathBetween │
+        │      per (interv,   │
+        │      cond) pair     │
+        │   2. LLM scores +   │
+        │      narrates       │
+        │                     │
+        │  Both: Path A wins  │
         │                     │
         │  Writes:            │
         │     mechanismScore, │
@@ -145,20 +155,28 @@ The match must:
         ┌─────────────────────┐
         │ synthesize-match    │
         │                     │
-        │  1. Compute formula │
-        │     score (det.)    │
+        │  1. weightedSum =   │
+        │     0.5·E+0.3·M+    │
+        │     0.2·L           │
         │                     │
-        │  2. LLM narrates    │  → { summary, concerns }
+        │  2. Eligibility     │
+        │     gate:           │
+        │     ineligible→0    │
+        │     likely_inelig.  │
+        │       →min(25, sum) │
+        │     else→sum        │
+        │                     │
+        │  3. LLM narrates    │  → { summary, concerns }
         │     summary +       │
         │     concerns        │
         │                     │
-        │  3. Lookup          │
+        │  4. Lookup          │
         │     repurposing-    │
         │     Rationale via   │
         │     repurposingDrug-│
         │     Ids[0] (if any) │
         │                     │
-        │  4. Assemble        │  → TrialMatch
+        │  5. Assemble        │  → TrialMatch
         │     TrialMatch      │
         │                     │
         │  Writes:            │
@@ -219,37 +237,51 @@ The match must:
 **Reads:** `patientProfile`, `candidate`, `mechanisms`, `repurposingCandidates`.
 **Writes:** `mechanismScore: number | null`, `mechanismRationale: string | null`.
 
-**Step 1 — KG path retrieval:**
+**Channel-aware behavior.** This node behaves differently based on `candidate.discoveredVia`. The rationale is that the repurposing channel has already produced a TxGNN-scored drug-disease pair upstream; re-scoring it with `pathBetween` + an LLM duplicates work and risks signal drift between two scoring sources. The strategy channel is a lexical CT.gov keyword match with no upstream biology check, so it needs the full pass.
 
-- For each resolved intervention drug × each `Mechanism` (one `Mechanism` per active patient condition, ≤5 mechanisms):
-  - `kg.pathBetween(drug.id, mechanism.primekgDiseaseId, maxHops = 3)` — returns up to 5 paths per pair.
-- Truncate the global path list to `MAX_KG_PATHS_PER_PROMPT = 6` — round-robin across pairs so every mechanism gets a chance.
-- If no paths found for any pair, proceed with empty `KGPath[]`; LLM is told "no KG path found within 3 hops" explicitly.
+```
+if candidate.discoveredVia.includes("repurposing"):
+  → Path A: TxGNN-sourced score; LLM narrates only.
+else:
+  → Path B: pathBetween + LLM scoring (the original design).
+```
 
-**Step 1a — repurposing-channel enrichment:**
+For a trial surfaced by **both** channels, Path A wins (TxGNN's score is the authoritative source for that drug-disease pair). Path B's `pathBetween` results, if cheap to retrieve, augment the rationale prompt but do not produce a competing score.
 
-- If `candidate.discoveredVia.includes("repurposing")`:
-  - Look up the source RepurposingCandidate via `candidate.repurposingDrugIds[0]` against `state.repurposingCandidates`.
-  - Append its `supportingPaths` to the KG paths block in the prompt (clearly labeled as "TxGNN-predicted repurposing path", separate from the per-pair `pathBetween` results).
+---
 
-> **Note on path provenance.** `RepurposingCandidate.supportingPaths` is already a `KGPath[]` in the exact shape this node's prompt consumes — `find-repurposing-candidates` populates it via `tools/txgnn.ts::lookupExplanation()`, and the TxGNN explanation data (`apps/agent/src/data/txgnn-explanations.json`) is committed in `KGPathSchema` form (types pre-normalized to `gene_protein`, edges already directional with PrimeKG-verbatim relation strings, uniformly `drug → gene → process → disease` 3-hop). This node does **not** re-query TxGNN, re-run Cypher to materialize the explanation, or transform the path shape. The drug-eval v2 spec's "Cypher metapath fallback for unexplained matches" remains deferred per that spec's lazy-fallback decision; in v1 of this design, an absent explanation surfaces as an empty `supportingPaths: []` and the node just runs the prompt without the repurposing-context block.
+**Path A — repurposing-channel (TxGNN score + LLM narrate):**
 
-**Step 2 — LLM scoring:**
+1. Look up the source RepurposingCandidate via `candidate.repurposingDrugIds[0]` against `state.repurposingCandidates`. If `repurposingDrugIds` has multiple entries (the same trial surfaced by multiple repurposing drugs), pick the one with the highest `predIndication`.
+2. `mechanismScore = round(sourceRC.predIndication * 100)`. No LLM scoring pass.
+3. LLM narrate-only call: prompt receives the trial summary, the source RepurposingCandidate's `supportingPaths` (TxGNN explanation), the patient's mechanisms (top gene + pathway names per mechanism), and the score. Returns `{ rationale: string }`.
+   - `mechanismRationale` is the LLM's output. The prompt instructs: "TxGNN scored this drug at indication=X for the patient's disease. Explain that score using the supporting path; reference the patient's gene/pathway context."
+4. If the source RepurposingCandidate has empty `supportingPaths` (TxGNN explanation missing for this drug-disease pair), fall back to a templated rationale: `"TxGNN predicted ${drug.name} for ${conditionName} (indication ${predIndication.toFixed(2)}); explanation path unavailable."` No LLM call.
 
-- Prompt receives: trial interventions + brief summary, ranked patient mechanisms (top gene names + top pathway names per mechanism, mirroring `mechanismPrompt`'s compact layout), KG paths (Step 1), repurposing supporting paths (Step 1a, if applicable).
-- Structured output:
-  ```ts
-  MechanismPlausibilityJudgmentSchema = z.object({
-    score: z.number().int().min(0).max(100),
-    rationale: z.string(),
-  })
-  ```
-- Prompt instruction: score the *biological plausibility* of the trial's intervention(s) targeting this patient's mechanisms. 0 = no plausible mechanism / unrelated pathway. 50 = indirect support / weak path. 100 = direct, well-supported by KG path and (if applicable) TxGNN explainer.
+**Path B — strategy-channel (KG + LLM score + narrate):**
+
+1. KG path retrieval: for each resolved intervention drug × each `Mechanism` (one Mechanism per active patient condition, ≤5 mechanisms):
+   - `kg.pathBetween(drug.id, mechanism.primekgDiseaseId, maxHops = 3)` — up to 5 paths per pair.
+2. Truncate the global path list to `MAX_KG_PATHS_PER_PROMPT = 6` — round-robin across pairs so every mechanism gets a chance.
+3. If no paths found across any pair, proceed with empty `KGPath[]`; LLM is told "no KG path found within 3 hops" explicitly.
+4. LLM scoring call: prompt receives trial interventions + brief summary, ranked patient mechanisms (compact gene/pathway layout, mirroring `mechanismPrompt`), and the KG paths. Returns:
+   ```ts
+   MechanismPlausibilityJudgmentSchema = z.object({
+     score: z.number().int().min(0).max(100),
+     rationale: z.string(),
+   })
+   ```
+5. Prompt instruction: score the *biological plausibility* of the trial's intervention(s) targeting this patient's mechanisms. 0 = no plausible mechanism / unrelated pathway. 50 = indirect support / weak path. 100 = direct, well-supported by the KG path.
+
+---
+
+> **Note on path provenance (Path A).** `RepurposingCandidate.supportingPaths` is already a `KGPath[]` in the exact shape this node's prompt consumes — `find-repurposing-candidates` populates it via `tools/txgnn.ts::lookupExplanation()`, and the TxGNN explanation data (`apps/agent/src/data/txgnn-explanations.json`) is committed in `KGPathSchema` form (types pre-normalized to `gene_protein`, edges already directional with PrimeKG-verbatim relation strings, uniformly `drug → gene → process → disease` 3-hop). This node does **not** re-query TxGNN, re-run Cypher to materialize the explanation, or transform the path shape. The drug-eval v2 spec's "Cypher metapath fallback for unexplained matches" remains deferred per that spec's lazy-fallback decision; in v1 of this design, an absent explanation triggers the templated-rationale fallback in step 4 above.
 
 **Error handling:**
 
-- KG call fails → empty paths; LLM step still runs with "KG unavailable" note in prompt.
-- LLM fails → `{ mechanismScore: null, mechanismRationale: null }`. Synthesize-match maps null → 50 with a concern.
+- Path A, LLM narrate fails → templated rationale (same as the missing-explanation fallback). Score is still TxGNN-sourced; the trial keeps its scoring signal.
+- Path B, KG call fails → empty paths; LLM step still runs with "KG unavailable" note in prompt.
+- Path B, LLM fails → `{ mechanismScore: null, mechanismRationale: null }`. Synthesize-match maps null → 50 with a concern.
 
 ### `literature-support`
 
@@ -299,14 +331,26 @@ mechanismScore = state.mechanismScore ?? 50
 
 literatureScore = clamp(0, 100, state.literatureSupport.length * 25)
 
-score = round(
+weightedSum = round(
   0.5 * eligibilityScore +
   0.3 * mechanismScore +
   0.2 * literatureScore
 )
+
+// Eligibility gate: an unenrollable patient cannot outrank an enrollable
+// one regardless of biology / literature.
+if (state.eligibility.overall === "ineligible") {
+  score = 0
+} else if (state.eligibility.overall === "likely_ineligible") {
+  score = Math.min(25, weightedSum)
+} else {
+  score = weightedSum
+}
 ```
 
-Weights and the literature saturation point are named constants in the node module (e.g. `WEIGHT_ELIGIBILITY = 0.5`) — easy to tune.
+Weights and the literature saturation point are named constants in the node module (e.g. `WEIGHT_ELIGIBILITY = 0.5`, `LIKELY_INELIGIBLE_CAP = 25`) — easy to tune.
+
+**Why the gate.** A pure weighted sum makes `(eligibility=ineligible=0, mechanism=80, literature=80)` score `0 + 24 + 16 = 40`, which reads as "marginal." That's wrong: an ineligible patient can't enroll, full stop, so the trial should not outrank an `eligible` candidate with weaker biology. The gate enforces that — eligibility is *permission to be scored*, not just one of three weights. This is also why the `score` field is documented as a sort key, not a clinical verdict: clinicians read `eligibility.overall`, `mechanismScore`, and `concerns` directly off the `TrialMatch`; the score just orders the list.
 
 **Step 2 — LLM narrate:**
 
@@ -492,7 +536,8 @@ Brittleness is acknowledged. RxNorm/DrugBank crosswalk is the hardening path; no
 | Disease MONDO unresolvable | Skip that condition in safety + pathBetween; already warn-logged upstream by `identify-relevant-mechanisms` |
 | Cypher throws (driver/network) | Empty result for that node's KG component; LLM step still runs; warn-log |
 | LLM API failure in `eligibility-check` | `eligibility = { ..., overall: "unclear" }`; subgraph proceeds with neutral score component |
-| LLM API failure in `mechanism-plausibility` | `mechanismScore = null` → maps to 50 + adds "mechanism evaluation unavailable" concern |
+| LLM API failure in `mechanism-plausibility` (Path A: narrate-only) | Score stays at TxGNN-sourced value; rationale falls back to templated string; subgraph proceeds with full scoring signal |
+| LLM API failure in `mechanism-plausibility` (Path B: scoring) | `mechanismScore = null` → maps to 50 + adds "mechanism evaluation unavailable" concern |
 | LLM API failure in `synthesize-match` | Templated summary + deterministic concerns; deterministic score still computes; match still flows back |
 | PubMed call throws | `literatureSupport` unchanged for this attempt; `evidenceAttempts++`; cycle bound still applies |
 | Both literature attempts return 0 citations | `literatureScore = 0`; `concerns` includes "no PubMed evidence found"; not an error |
@@ -505,7 +550,8 @@ Brittleness is acknowledged. RxNorm/DrugBank crosswalk is the hardening path; no
 1. **Drug-name → PrimeKG resolution is brittle.** CT.gov interventions are free-form strings; salt forms, brand names, combo arms ("olaparib + bevacizumab") will miss our normalize-and-exact-match approach. Acceptable for prototype; flag for RxNorm/DrugBank crosswalk later. Already flagged in drug-eval v2.
 2. **PrimeKG `contraindication` coverage is not exhaustive.** A drug being absent from contraindication edges doesn't mean it's safe for the patient — it means PrimeKG doesn't have data on that pair. The safety step is a positive-signal filter (when present, surface it); absence is not endorsement. Document this in the UI badge for `safetyConcerns`.
 3. **`pathBetween` with 3 hops on dense oncology nodes will be slow.** PrimeKG cancer diseases have hundreds of associated genes and thousands of PPI edges. `LIMIT 5` bounds path return but the planner still walks the neighborhood. If we see >2s queries on EGFR / TP53 / BRCA1-class diseases, restrict the per-hop relationship types (exclude `ppi`) or precompute drug-disease shortest paths offline.
-4. **LLM scoring drift on `mechanism-plausibility`.** The LLM produces the `mechanismScore` integer; runs are not reproducible across model versions. The hybrid scoring partly mitigates this (only mechanism's 30% is LLM-driven) but eligibility is also LLM-influenced (the `overall` enum). Track score distributions across patients on the first 10 runs and flag if Haiku's calibration shifts meaningfully on model bumps.
+4. **LLM scoring drift on Path B `mechanism-plausibility`.** Strategy-channel trials get their `mechanismScore` from an LLM call; runs are not reproducible across model versions. Path A is immune (TxGNN is deterministic given the same dump). Eligibility is also LLM-influenced (the `overall` enum). Track score distributions across patients on the first 10 runs and flag if Haiku's calibration shifts meaningfully on model bumps.
+9. **Channel-split scoring asymmetry.** Path A's score reflects TxGNN's confidence on a drug-disease pair (population-level). Path B's score reflects an LLM's read of 3-hop KG paths (also population-level, but filtered through prompt phrasing). The two are not strictly commensurable — a TxGNN 0.85 doesn't mean the same thing as an LLM "85." Mitigation: both go into the same weighted sum and the same UI pillar; calibration is empirical, not formal. Watch for ranking inversions where a Path A score 70 sits above a Path B score 85 (or vice versa) for trials the clinician judges equivalent; re-tune if it happens systematically.
 5. **PubMed query construction is hand-crafted, not LLM-generated.** Trade is reproducibility vs. recall — a slightly more clever query (synonyms, MeSH terms, year limits) might surface better citations, but we don't want a per-trial LLM call in the literature step. Revisit if first runs show consistently empty literature on common drugs.
 6. **`MAX_KG_PATHS_PER_PROMPT = 6` may be too tight on multi-intervention combo trials.** Some oncology trials list 4 interventions; with 5 mechanisms that's 20 pairs and we only show 6 paths. Mitigation: the round-robin selection ensures every mechanism gets at least one path; LLM is told the cap is informational, not exhaustive.
 7. **No abstract retrieval in v1.** `Citation.abstractExcerpt` will be undefined; `synthesize-match`'s prompt only sees titles. If the LLM consistently writes "no abstract context available" in its summaries, add the efetch step.
@@ -516,10 +562,18 @@ Brittleness is acknowledged. RxNorm/DrugBank crosswalk is the hardening path; no
 Following `docs/codebase-conventions.md`:
 
 - **`subgraphs/trial-eval/nodes/eligibility-check.test.ts`** — fixtures: patient with a known contraindication-edge condition, trial with an intervention that triggers it. Mock `llm` and `kg.findContraindicationsForDrugs`. Assert: safetyConcerns populated; LLM prompt includes the concern; assessment passed through.
-- **`subgraphs/trial-eval/nodes/mechanism-plausibility.test.ts`** — fixture trial discovered via repurposing channel; mock `kg.pathBetween`. Assert: per-pair paths retrieved; source RepurposingCandidate's `supportingPaths` reaches the prompt; LLM mock returns score+rationale; both written to state.
+- **`subgraphs/trial-eval/nodes/mechanism-plausibility.test.ts`** — cover both channel paths:
+  - Path A (repurposing-only): assert `mechanismScore = round(predIndication × 100)` (no LLM scoring call); LLM narrate-only invoked with `supportingPaths`; missing `supportingPaths` triggers templated rationale (no LLM call).
+  - Path B (strategy-only): mock `kg.pathBetween`; assert per-pair paths retrieved, capped at `MAX_KG_PATHS_PER_PROMPT`; LLM scoring mock returns `{score, rationale}`; both written to state.
+  - Both-channel: assert Path A taken (TxGNN score wins); strategy-channel `pathBetween` not called or only used to augment rationale.
 - **`subgraphs/trial-eval/nodes/literature-support.test.ts`** — mock `searchPubMed`. Cases: (a) attempt 0 returns 4 citations → no broaden; (b) attempt 0 returns 1 → broaden, attempt 1 returns 2, merged set has 3 (deduped by pmid); (c) PubMed throws → state unchanged, attempts++.
 - **`subgraphs/trial-eval/nodes/decide-if-more-evidence.test.ts`** — trivial; covered. (Already passing because the routing fn was implemented in the skeleton.)
-- **`subgraphs/trial-eval/nodes/synthesize-match.test.ts`** — fixtures covering all sub-score combinations: (a) eligible + mechanism 80 + 3 citations → score 88; (b) likely_ineligible + null mechanism + 0 citations → score 27.5 → 28 + concerns flagged; (c) repurposing-channel candidate → `repurposingRationale` populated from `state.repurposingCandidates`. LLM narrate mocked.
+- **`subgraphs/trial-eval/nodes/synthesize-match.test.ts`** — fixtures covering the score formula + eligibility gate:
+  - (a) `eligible` + mechanism 80 + 3 citations → weightedSum = `0.5·100 + 0.3·80 + 0.2·75 = 89` → score 89 (no gate).
+  - (b) `likely_ineligible` + null mechanism + 0 citations → weightedSum = `0.5·25 + 0.3·50 + 0.2·0 = 27.5` → 28; gate caps at 25 → score 25.
+  - (c) `ineligible` + mechanism 90 + 4 citations → weightedSum = `0.5·0 + 0.3·90 + 0.2·100 = 47` → gate forces score 0; concerns include "patient ineligible".
+  - (d) Repurposing-channel candidate → `repurposingRationale` populated from `state.repurposingCandidates`; templated `summary` matches the spec.
+  - LLM narrate mocked in all cases.
 - **`tools/pubmed.test.ts`** — mock `fetch`. Assert: esearch → esummary flow, Citation shape, retry on 429, optional API key in query.
 - **`tools/kg.test.ts`** (existing file) — add tests for `pathBetween` and `findContraindicationsForDrugs` via in-memory driver substitution (existing `setDriver` test seam).
 
