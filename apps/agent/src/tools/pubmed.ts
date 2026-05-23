@@ -6,11 +6,12 @@
  *   1. `esearch.fcgi?db=pubmed&term=<q>&retmax=<n>&retmode=json`
  *      → `{ esearchresult: { idlist: string[] } }`.
  *   2. `esummary.fcgi?db=pubmed&id=<csv>&retmode=json`
- *      → `{ result: { uids: string[], <pmid>: { title, pubdate, articleids, ... } } }`.
+ *      → `{ result: { uids: string[], <pmid>: { title, pubdate, pubtype, articleids, ... } } }`.
  *
- * No abstract retrieval in v1 (efetch returns XML and bloats responses).
- * `Citation.abstractExcerpt` stays undefined. Revisit if synthesize-match
- * starts writing "no abstract context" in summaries.
+ * Abstracts are fetched on demand via `fetchAbstracts(pmids)`, which calls
+ * `efetch.fcgi?...&rettype=abstract&retmode=text` and parses the plain-text
+ * response into a `Map<pmid, abstract>` (truncated to 500 chars per entry).
+ * Records without a parseable abstract body (editorials, letters) are skipped.
  *
  * ## Rate limits and retries
  *
@@ -24,10 +25,12 @@ import type { Citation } from "@clinical-trial-matching/shared";
 
 const ESEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi";
 const ESUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi";
+const EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
 const PUBMED_BASE = "https://pubmed.ncbi.nlm.nih.gov";
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
 const RETRYABLE_STATUSES = new Set([429, 503]);
+const ABSTRACT_MAX_CHARS = 500;
 
 type EsearchResponse = {
   esearchresult?: { idlist?: string[] };
@@ -52,6 +55,68 @@ export async function searchPubMed(
   const pmids = await esearch(query, maxResults);
   if (pmids.length === 0) return [];
   return await esummary(pmids);
+}
+
+export async function fetchAbstracts(
+  pmids: string[],
+): Promise<Map<string, string>> {
+  if (pmids.length === 0) return new Map();
+  const url = appendApiKey(
+    `${EFETCH_URL}?db=pubmed&id=${pmids.join(",")}&rettype=abstract&retmode=text`,
+  );
+  const res = await fetchWithRetry(url);
+  if (!res.ok) throw new Error(`PubMed efetch ${res.status} for ${url}`);
+  const text = await res.text();
+  return parseAbstracts(text);
+}
+
+// PubMed efetch text format: records separated by blank lines; each record
+// ends with "PMID: <num>". Abstract body is the run of paragraphs between
+// the author information block and the PMID footer. This is a best-effort
+// regex parse — return what we can find; skip records with no abstract.
+function parseAbstracts(text: string): Map<string, string> {
+  const map = new Map<string, string>();
+  // Split on lines like "1. ", "2. ", etc., which mark the start of each record.
+  const records = text.split(/\n(?=\d+\. )/);
+  for (const rec of records) {
+    const pmidMatch = /\nPMID:\s*(\d+)\b/.exec(rec);
+    if (!pmidMatch) continue;
+    const pmid = pmidMatch[1]!;
+    // Heuristic: take everything between the line after "Author information:"
+    // ends (an empty line) and the "PMID:" / "Copyright" / "DOI:" footer.
+    // Falls back to text between the title and PMID if no author block.
+    const lines = rec.split("\n");
+    const pmidLineIdx = lines.findIndex((l) => /^PMID:\s*\d+/.test(l));
+    if (pmidLineIdx < 0) continue;
+    // Find start: after the author/affiliation block. The line immediately
+    // after a block of lines starting with "(" or "Author information:" /
+    // capitalized name lists. Simplest heuristic: find the first blank line
+    // AFTER any line that starts with "Author information:".
+    let start = -1;
+    let inAuthorBlock = false;
+    for (let i = 0; i < pmidLineIdx; i++) {
+      const ln = lines[i]!;
+      if (/^Author information:/.test(ln)) inAuthorBlock = true;
+      if (inAuthorBlock && ln.trim() === "") {
+        start = i + 1;
+        break;
+      }
+    }
+    if (start < 0) continue; // no author block → no reliable abstract boundary
+    // End at the PMID line, also stopping at Copyright/DOI/©.
+    let end = pmidLineIdx;
+    for (let i = start; i < pmidLineIdx; i++) {
+      const ln = lines[i]!;
+      if (/^(Copyright|©|DOI:)/i.test(ln)) {
+        end = i;
+        break;
+      }
+    }
+    const abstract = lines.slice(start, end).join("\n").trim();
+    if (!abstract) continue;
+    map.set(pmid, abstract.slice(0, ABSTRACT_MAX_CHARS));
+  }
+  return map;
 }
 
 async function esearch(query: string, retmax: number): Promise<string[]> {

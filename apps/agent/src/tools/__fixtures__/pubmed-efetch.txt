@@ -1,0 +1,37 @@
+1. N Engl J Med. 2024 Nov 28;391(22):2057-2068. doi: 10.1056/NEJMoa2400000.
+
+Osimertinib versus chemotherapy in EGFR-mutated NSCLC.
+
+Smith J(1), Doe J(2).
+
+Author information:
+(1)Department of Oncology, Example Hospital.
+(2)Same department.
+
+BACKGROUND: Osimertinib is a third-generation EGFR-TKI that selectively
+inhibits both EGFR-TKI sensitizing and EGFR T790M resistance mutations.
+
+METHODS: We conducted a randomized phase III trial comparing osimertinib
+with chemotherapy in patients with EGFR-mutated advanced NSCLC.
+
+CONCLUSIONS: Osimertinib showed significantly improved progression-free
+survival compared with chemotherapy in EGFR-mutated NSCLC.
+
+PMID: 39603809
+DOI: 10.1056/NEJMoa2400000
+
+2. Lancet Oncol. 2024 Oct;25(10):e520-e530.
+
+EGFR T790M resistance mechanisms in NSCLC.
+
+Lee K(1).
+
+Author information:
+(1)Translational Cancer Lab.
+
+Background EGFR T790M mutation is the most common resistance mechanism
+to first-generation EGFR-TKIs. We review current understanding of T790M
+biology and clinical management strategies.
+
+PMID: 39463445
+DOI: 10.1016/S1470-2045(24)00000-0
