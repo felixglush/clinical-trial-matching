@@ -8,15 +8,15 @@ import { synthesizeMatch } from "./nodes/synthesize-match.js";
 
 export const trialEvalGraph = new StateGraph(TrialEvalState)
   .addNode("eligibility-check", eligibilityCheck)
-  .addNode("mechanism-plausibility", mechanismPlausibility)
   .addNode("literature-support", literatureSupport)
+  .addNode("mechanism-plausibility", mechanismPlausibility)
   .addNode("synthesize-match", synthesizeMatch)
   .addEdge(START, "eligibility-check")
-  .addEdge("eligibility-check", "mechanism-plausibility")
-  .addEdge("mechanism-plausibility", "literature-support")
+  .addEdge("eligibility-check", "literature-support")
   .addConditionalEdges("literature-support", decideIfMoreEvidence, [
     "literature-support",
-    "synthesize-match",
+    "mechanism-plausibility",
   ])
+  .addEdge("mechanism-plausibility", "synthesize-match")
   .addEdge("synthesize-match", END)
   .compile();
