@@ -68,7 +68,7 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     mechanismRationale: "Drug X targets the relevant pathway.",
     literatureSupport: [citation("1"), citation("2"), citation("3")],
     evidenceAttempts: 1,
-    match: null,
+    matches: [],
     ...overrides,
   };
 }
@@ -80,7 +80,7 @@ describe("synthesizeMatch — score formula (eligibility + mechanism only; no li
       state({ eligibility: elig("eligible"), mechanismScore: 80 }),
     );
     // 0.6*100 + 0.4*80 = 60 + 32 = 92
-    expect(out.match!.score).toBe(92);
+    expect(out.matches![0]!.score).toBe(92);
   });
 
   it("likely_ineligible + null mechanism → capped at 25 by gate", async () => {
@@ -94,7 +94,7 @@ describe("synthesizeMatch — score formula (eligibility + mechanism only; no li
       }),
     );
     // weightedSum = 0.6*25 + 0.4*50 = 15 + 20 = 35. Gate: min(25, 35) = 25.
-    expect(out.match!.score).toBe(25);
+    expect(out.matches![0]!.score).toBe(25);
   });
 
   it("ineligible + great biology → 0 (gate)", async () => {
@@ -106,7 +106,7 @@ describe("synthesizeMatch — score formula (eligibility + mechanism only; no li
         literatureSupport: [citation("a"), citation("b"), citation("c"), citation("d")],
       }),
     );
-    expect(out.match!.score).toBe(0);
+    expect(out.matches![0]!.score).toBe(0);
   });
 
   it("citation count does not affect the score (literature is not in the formula)", async () => {
@@ -117,7 +117,7 @@ describe("synthesizeMatch — score formula (eligibility + mechanism only; no li
         literatureSupport: Array.from({ length: 10 }, (_, i) => citation(String(i))),
       }),
     );
-    expect(out0.match!.score).toBe(out10.match!.score);
+    expect(out0.matches![0]!.score).toBe(out10.matches![0]!.score);
   });
 
   it("null mechanism maps to 50 in the formula", async () => {
@@ -127,7 +127,7 @@ describe("synthesizeMatch — score formula (eligibility + mechanism only; no li
     );
     // eligibility=likely_eligible(75) + mechanism=null→50
     // = 0.6*75 + 0.4*50 = 45 + 20 = 65
-    expect(out.match!.score).toBe(65);
+    expect(out.matches![0]!.score).toBe(65);
   });
 });
 
@@ -148,18 +148,18 @@ describe("synthesizeMatch — repurposingRationale", () => {
         repurposingCandidates: [rc],
       }),
     );
-    expect(out.match!.repurposingRationale).not.toBeNull();
-    expect(out.match!.repurposingRationale!.drugName).toBe("osimertinib");
-    expect(out.match!.repurposingRationale!.originalIndications).toEqual([
+    expect(out.matches![0]!.repurposingRationale).not.toBeNull();
+    expect(out.matches![0]!.repurposingRationale!.drugName).toBe("osimertinib");
+    expect(out.matches![0]!.repurposingRationale!.originalIndications).toEqual([
       "non-small cell lung carcinoma",
     ]);
-    expect(out.match!.repurposingRationale!.summary).toContain("0.92");
+    expect(out.matches![0]!.repurposingRationale!.summary).toContain("0.92");
   });
 
   it("leaves repurposingRationale null for strategy-only candidates", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(state());
-    expect(out.match!.repurposingRationale).toBeNull();
+    expect(out.matches![0]!.repurposingRationale).toBeNull();
   });
 });
 
@@ -168,9 +168,9 @@ describe("synthesizeMatch — fallback on LLM failure", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     __invoke.mockRejectedValue(new Error("LLM down"));
     const out = await synthesizeMatch(state());
-    expect(out.match).not.toBeNull();
-    expect(out.match!.score).toBeGreaterThan(0);
-    expect(out.match!.summary).toContain("Drug X for T2DM");
+    expect(out.matches).toHaveLength(1);
+    expect(out.matches![0]!.score).toBeGreaterThan(0);
+    expect(out.matches![0]!.summary).toContain("Drug X for T2DM");
     warn.mockRestore();
   });
 
@@ -178,7 +178,7 @@ describe("synthesizeMatch — fallback on LLM failure", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     __invoke.mockRejectedValue(new Error("x"));
     const out = await synthesizeMatch(state({ eligibility: elig("ineligible") }));
-    expect(out.match!.concerns.some((c) => /ineligible/i.test(c))).toBe(true);
+    expect(out.matches![0]!.concerns.some((c) => /ineligible/i.test(c))).toBe(true);
   });
 });
 
@@ -186,14 +186,14 @@ describe("synthesizeMatch — TrialMatch shape", () => {
   it("carries all TrialCandidate fields onto the match", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(state());
-    expect(out.match!.nctId).toBe("NCT0001");
-    expect(out.match!.title).toBe("Drug X for T2DM");
-    expect(out.match!.interventions).toEqual(["Drug X"]);
+    expect(out.matches![0]!.nctId).toBe("NCT0001");
+    expect(out.matches![0]!.title).toBe("Drug X for T2DM");
+    expect(out.matches![0]!.interventions).toEqual(["Drug X"]);
   });
 
   it("uses 'Mechanism evaluation unavailable' rationale fallback when state's is null", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(state({ mechanismRationale: null }));
-    expect(out.match!.mechanismRationale).toMatch(/unavailable/i);
+    expect(out.matches![0]!.mechanismRationale).toMatch(/unavailable/i);
   });
 });

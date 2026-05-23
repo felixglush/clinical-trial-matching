@@ -95,7 +95,12 @@ export async function synthesizeMatch(
     repurposingRationale,
     concerns,
   };
-  return { match };
+  // Wrap in a single-element array so the subgraph's `matches` field
+  // (concat reducer) propagates back to the parent graph's `matches`
+  // field (also concat reducer). The parent appends this branch's
+  // [match] to the running list, accumulating across all fan-out
+  // branches.
+  return { matches: [match] };
 }
 
 // ---------- Formula ----------

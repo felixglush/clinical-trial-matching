@@ -42,9 +42,15 @@ export const TrialEvalState = Annotation.Root({
     default: () => 0,
   }),
 
-  match: Annotation<TrialMatch | null>({
-    reducer: (_prev, next) => next,
-    default: () => null,
+  // Field name MUST match the parent graph's `matches: TrialMatch[]` so
+  // LangGraph propagates this subgraph's result back through the parent
+  // state. Concat reducer here is symmetric with the parent's reducer:
+  // synthesize-match writes `{ matches: [theOneMatch] }`, this subgraph's
+  // matches becomes `[theOneMatch]`, then the parent appends that array
+  // to its own `matches` when this fan-out branch completes.
+  matches: Annotation<TrialMatch[]>({
+    reducer: (prev, next) => prev.concat(next),
+    default: () => [],
   }),
 });
 

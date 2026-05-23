@@ -74,7 +74,7 @@ function state(): TrialEvalStateType {
     mechanismRationale: null,
     literatureSupport: [],
     evidenceAttempts: 0,
-    match: null,
+    matches: [],
   };
 }
 
