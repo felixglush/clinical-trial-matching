@@ -118,19 +118,22 @@ class TxGNNRunner:
             self.has_weights = False
 
         self.id_mapping = self.tx_data.retrieve_id_mapping()
-        # PrimeKG collapses related disease ontology terms into a single node,
-        # so idx2id_disease values look like "13924_12592_14672_..." (underscore-
-        # joined MONDO numerics, no prefix). Build two reverse indexes:
-        #  - exact: full grouped-id -> idx
-        #  - component: each MONDO numeric -> idx (so callers can look up by
-        #    a single MONDO id without knowing the grouping)
+        # PrimeKG stores disease node_ids as MONDO numerics. For 1,267
+        # "MONDO_grouped" nodes the id is an underscore-join of MONDO numerics,
+        # e.g. "13924_12592_..." for osteogenesis imperfecta — and neither
+        # TxGNN nor PrimeKG ships a reverse mondo->node lookup, so we build
+        # one here by splitting the grouped ids on "_".
+        #
+        # The exact-form keys use TxGNN's convert2str representation, which
+        # applies float() to non-underscore ids (turning "5148" into "5148.0").
+        # We normalize callers' inputs through the same helper so the lookup
+        # form matches what's stored.
         self._id2idx_disease_exact = {
             str(v): int(k) for k, v in self.id_mapping["idx2id_disease"].items()
         }
         self._mondo_component_to_idx: dict[str, int] = {}
         for grouped_id, idx in self._id2idx_disease_exact.items():
             for component in grouped_id.split("_"):
-                # Don't overwrite — first disease node wins on conflict.
                 self._mondo_component_to_idx.setdefault(component, idx)
 
     @modal.method()
@@ -144,19 +147,27 @@ class TxGNNRunner:
     def _resolve_disease_idx(self, disease_id: str) -> int | None:
         """Resolve a disease identifier to PrimeKG node idx.
 
-        Accepts:
-          - MONDO:0005148  -> strips prefix, matches MONDO numeric component
-          - 0005148        -> matches MONDO numeric component
-          - 5148           -> matches MONDO numeric component (lossy, but PrimeKG
-                              stores ids without leading zeros)
-          - underscore-joined grouped id -> exact match
+        Accepts MONDO ids with or without the "MONDO:" prefix and with or
+        without leading zeros, as well as underscore-joined grouped ids.
         """
+        from txgnn.utils import convert2str
+
+        # Underscore-joined grouped ids: exact match against storage form.
         if disease_id in self._id2idx_disease_exact:
             return self._id2idx_disease_exact[disease_id]
-        stripped = disease_id.split(":", 1)[-1].lstrip("0") or "0"
-        if stripped in self._mondo_component_to_idx:
-            return self._mondo_component_to_idx[stripped]
-        return None
+
+        # Strip "MONDO:" prefix and leading zeros, then normalize through
+        # TxGNN's own convert2str so the format matches stored ids
+        # ("5148" -> "5148.0" for single-MONDO entries).
+        bare = disease_id.split(":", 1)[-1].lstrip("0") or "0"
+        normalized = convert2str(bare)
+        if normalized in self._id2idx_disease_exact:
+            return self._id2idx_disease_exact[normalized]
+
+        # Last resort: this MONDO id may be one component of a grouped node.
+        # _mondo_component_to_idx is keyed on bare numerics (the underscore
+        # split bypasses convert2str's float() coercion).
+        return self._mondo_component_to_idx.get(bare)
 
     @modal.method()
     def list_diseases(self, limit: int = 50, search: str | None = None) -> list[dict]:
