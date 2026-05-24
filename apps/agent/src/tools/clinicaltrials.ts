@@ -34,6 +34,7 @@
  */
 
 import type {
+  PriorTerminatedTrial,
   SearchFilters,
   TrialCandidate,
   TrialLocation,
@@ -51,6 +52,9 @@ const FIELDS = [
   "protocolSection.identificationModule.nctId",
   "protocolSection.identificationModule.briefTitle",
   "protocolSection.statusModule.overallStatus",
+  "protocolSection.statusModule.whyStopped",
+  "protocolSection.statusModule.lastKnownStatus",
+  "protocolSection.statusModule.completionDateStruct.date",
   "protocolSection.descriptionModule.briefSummary",
   "protocolSection.conditionsModule.conditions",
   "protocolSection.designModule.phases",
@@ -78,6 +82,50 @@ export async function searchClinicalTrials(q: CtgQuery): Promise<TrialCandidate[
   }
   const body = (await res.json()) as CtgResponse;
   return (body.studies ?? []).map(toTrialCandidate);
+}
+
+const TERMINATED_PAGE_SIZE = 20;
+const TERMINATED_STATUSES = "TERMINATED|WITHDRAWN|SUSPENDED";
+
+export async function searchTerminatedPriorTrials(
+  args: { intervention: string; condition: string; pageSize?: number },
+): Promise<PriorTerminatedTrial[]> {
+  const params = new URLSearchParams();
+  params.set("query.intr", args.intervention);
+  params.set("query.term", args.condition);
+  params.set("filter.overallStatus", TERMINATED_STATUSES);
+  params.set("pageSize", String(args.pageSize ?? TERMINATED_PAGE_SIZE));
+  params.set("fields", FIELDS);
+  const url = `${BASE_URL}?${params.toString()}`;
+
+  const res = await fetchWithRetry(url);
+  if (!res.ok) throw new Error(`CT.gov ${res.status} for ${url}`);
+  const body = (await res.json()) as CtgResponse;
+  return (body.studies ?? []).flatMap(toPriorTerminatedTrial);
+}
+
+// Returns [] (not [partial]) if the study lacks an nctId or has an
+// overallStatus we don't recognize as a terminated variant. flatMap drops
+// the empty arrays cleanly.
+function toPriorTerminatedTrial(study: CtgStudy): PriorTerminatedTrial[] {
+  const p = study.protocolSection ?? {};
+  const nctId = p.identificationModule?.nctId;
+  const status = p.statusModule?.overallStatus;
+  if (!nctId || (status !== "TERMINATED" && status !== "WITHDRAWN" && status !== "SUSPENDED")) {
+    return [];
+  }
+  return [{
+    nctId,
+    briefTitle: p.identificationModule?.briefTitle ?? "",
+    conditions: p.conditionsModule?.conditions ?? [],
+    interventions: (p.armsInterventionsModule?.interventions ?? [])
+      .map((i) => i.name)
+      .filter((n): n is string => typeof n === "string"),
+    phase: p.designModule?.phases?.[0],
+    status,
+    whyStopped: p.statusModule?.whyStopped,
+    completionDate: p.statusModule?.completionDateStruct?.date,
+  }];
 }
 
 function buildUrl(q: CtgQuery): string {
@@ -140,7 +188,12 @@ function sleep(ms: number): Promise<void> {
 type CtgStudy = {
   protocolSection?: {
     identificationModule?: { nctId?: string; briefTitle?: string };
-    statusModule?: { overallStatus?: string };
+    statusModule?: {
+      overallStatus?: string;
+      whyStopped?: string;
+      lastKnownStatus?: string;
+      completionDateStruct?: { date?: string };
+    };
     descriptionModule?: { briefSummary?: string };
     conditionsModule?: { conditions?: string[] };
     designModule?: { phases?: string[] };
