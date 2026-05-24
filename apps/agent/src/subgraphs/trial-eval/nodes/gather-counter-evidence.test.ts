@@ -50,7 +50,7 @@ function baseState(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateT
     } as unknown as TrialEvalStateType["candidate"],
     mechanisms: [
       {
-        conditionId: "snomed:254637007",
+        conditionId: "254637007",
         conditionName: "Non-small cell lung carcinoma",
         mondoId: "MONDO:0005233",
         geneTargets: [],
@@ -92,7 +92,7 @@ describe("gatherCounterEvidence", () => {
       id: "DB09330", name: "osimertinib", type: "drug",
     });
     vi.mocked(crosswalk.resolveSnomedCondition).mockReturnValue({
-      primekgNodeId: "MONDO:0005233", primekgNodeName: "NSCLC",
+      mondoId: "MONDO:0005233", primekgNodeId: "MONDO:0005233", primekgName: "NSCLC",
     });
     vi.mocked(kg.findContraindicationsForDrugs).mockResolvedValue([{
       drugId: "DB09330", drugName: "osimertinib",
@@ -147,7 +147,7 @@ describe("gatherCounterEvidence", () => {
       id: "DB09330", name: "osimertinib", type: "drug",
     });
     vi.mocked(crosswalk.resolveSnomedCondition).mockReturnValue({
-      primekgNodeId: "MONDO:0005233", primekgNodeName: "NSCLC",
+      mondoId: "MONDO:0005233", primekgNodeId: "MONDO:0005233", primekgName: "NSCLC",
     });
     vi.mocked(kg.findContraindicationsForDrugs).mockResolvedValue([]);
     vi.mocked(ctg.searchTerminatedPriorTrials).mockResolvedValue([]);
@@ -159,7 +159,7 @@ describe("gatherCounterEvidence", () => {
   it("soft-fails when PrimeKG throws — leaves contraindications empty, continues with CT.gov", async () => {
     vi.mocked(kg.resolveDrugByName).mockRejectedValue(new Error("neo4j down"));
     vi.mocked(crosswalk.resolveSnomedCondition).mockReturnValue({
-      primekgNodeId: "MONDO:0005233", primekgNodeName: "NSCLC",
+      mondoId: "MONDO:0005233", primekgNodeId: "MONDO:0005233", primekgName: "NSCLC",
     });
     vi.mocked(ctg.searchTerminatedPriorTrials).mockResolvedValue([{
       nctId: "NCT01", briefTitle: "T", conditions: [], interventions: [],
@@ -176,7 +176,7 @@ describe("gatherCounterEvidence", () => {
       id: "DB09330", name: "osimertinib", type: "drug",
     });
     vi.mocked(crosswalk.resolveSnomedCondition).mockReturnValue({
-      primekgNodeId: "MONDO:0005233", primekgNodeName: "NSCLC",
+      mondoId: "MONDO:0005233", primekgNodeId: "MONDO:0005233", primekgName: "NSCLC",
     });
     vi.mocked(kg.findContraindicationsForDrugs).mockResolvedValue([]);
     vi.mocked(ctg.searchTerminatedPriorTrials).mockRejectedValue(new Error("ctgov 503"));
@@ -188,7 +188,7 @@ describe("gatherCounterEvidence", () => {
   it("skips CT.gov entirely when candidate has no interventions", async () => {
     vi.mocked(kg.resolveDrugByName).mockResolvedValue(null);
     vi.mocked(crosswalk.resolveSnomedCondition).mockReturnValue({
-      primekgNodeId: "MONDO:0005233", primekgNodeName: "NSCLC",
+      mondoId: "MONDO:0005233", primekgNodeId: "MONDO:0005233", primekgName: "NSCLC",
     });
     vi.mocked(kg.findContraindicationsForDrugs).mockResolvedValue([]);
 
@@ -198,5 +198,41 @@ describe("gatherCounterEvidence", () => {
     const out = await gatherCounterEvidence(state);
     expect(ctg.searchTerminatedPriorTrials).not.toHaveBeenCalled();
     expect(out.structuredCounterEvidence?.terminatedPriorTrials).toEqual([]);
+  });
+
+  it("dedupes terminated trials by nctId when multiple interventions return overlapping results", async () => {
+    vi.mocked(kg.resolveDrugByName).mockResolvedValue({
+      id: "DB09330", name: "osimertinib", type: "drug",
+    });
+    vi.mocked(crosswalk.resolveSnomedCondition).mockReturnValue({
+      mondoId: "MONDO:0005233", primekgNodeId: "MONDO:0005233", primekgName: "NSCLC",
+    });
+    vi.mocked(kg.findContraindicationsForDrugs).mockResolvedValue([]);
+
+    // Two interventions, both queries return the SAME trial.
+    const sharedTrial = {
+      nctId: "NCT00000001",
+      briefTitle: "Same trial returned by both queries",
+      conditions: ["NSCLC"],
+      interventions: ["Osimertinib"],
+      status: "TERMINATED" as const,
+      whyStopped: "Lack of efficacy.",
+    };
+    vi.mocked(ctg.searchTerminatedPriorTrials)
+      .mockResolvedValueOnce([sharedTrial])
+      .mockResolvedValueOnce([sharedTrial]);
+
+    const state = baseState({
+      candidate: {
+        ...baseState().candidate,
+        interventions: ["DrugA", "DrugB"],
+      } as TrialEvalStateType["candidate"],
+    });
+
+    const out = await gatherCounterEvidence(state);
+
+    expect(ctg.searchTerminatedPriorTrials).toHaveBeenCalledTimes(2);
+    expect(out.structuredCounterEvidence?.terminatedPriorTrials).toHaveLength(1);
+    expect(out.structuredCounterEvidence?.terminatedPriorTrials?.[0]?.nctId).toBe("NCT00000001");
   });
 });
