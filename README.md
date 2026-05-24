@@ -44,19 +44,21 @@ Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys 
 **trial-eval-subgraph** (one instance per candidate):
 
 ```
-            eligibility-check
-                    │
-                    ▼
-          mechanism-plausibility
-                    │
-                    ▼
-           literature-support  ◀──┐
-                    │             │
-                    ▼             │
-           < 3 citations? ────────┘
-                    │  (attempts < 2)
-                    ▼  (else)
-             synthesize-match
+                  eligibility-check
+                   │             │
+                   ▼             ▼
+          literature-support   gather-counter-evidence
+                   │             │
+            ┌──────┘             │
+            ▼                    │
+   < 3 citations? ──┐            │
+       (attempts<2) │            │
+                    └──┬─────────┘
+                       ▼
+              mechanism-plausibility
+                       │
+                       ▼
+                synthesize-match
 ```
 
 ### Nodes
@@ -76,10 +78,11 @@ Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys 
 **Per-trial evaluation subgraph**
 
 - `eligibility-check` — LLM per-criterion analysis of inclusion/exclusion against the patient profile.
-- `mechanism-plausibility` — KG path search (intervention → patient's condition); LLM scores how plausible the mechanism is.
-- `literature-support` — PubMed query for trial drug + condition + mechanism; collect citations.
+- `literature-support` — PubMed query for trial drug + condition + mechanism; collect supporting citations. Runs in parallel with `gather-counter-evidence`.
+- `gather-counter-evidence` — Collect structured biomedical counter-evidence: PrimeKG drug↔disease contraindication edges, TxGNN `predContraindication` (when surfaced via repurposing), and CT.gov terminated/withdrawn/suspended prior trials of the drug+condition with raw `whyStopped` text. Replaces the prior PubMed sentiment-keyword counter-query.
 - `decide-if-more-evidence` *(conditional edge)* — If literature coverage is thin and attempts remain, loop back to `literature-support` with a broader query.
-- `synthesize-match` — Combine eligibility + mechanism + literature into a final `TrialMatch` with a combined score.
+- `mechanism-plausibility` — KG path search (intervention → patient's condition); LLM scores how plausible the mechanism is, considering both supporting and counter-evidence.
+- `synthesize-match` — Combine eligibility + mechanism + literature + counter-evidence into a final `TrialMatch` with a combined score.
 
 ## Data sources
 
