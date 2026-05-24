@@ -25,12 +25,15 @@
  * ## Field projection
  *
  * CT.gov v2 returns very large records by default. We pass `fields=` to
- * keep responses lean — only what `TrialCandidate` carries.
+ * keep responses lean. Two separate field lists: `TRIAL_CANDIDATE_FIELDS`
+ * for `searchClinicalTrials` (only what `TrialCandidate` carries) and
+ * `TERMINATED_TRIAL_FIELDS` for `searchTerminatedPriorTrials` (lean to its
+ * `PriorTerminatedTrial` consumer).
  *
  * ## Pagination
  *
- * `pageSize` defaults to 50; we never walk `nextPageToken`. Top-50 per
- * query is the spec's cap.
+ * `pageSize` defaults to 50 for `searchClinicalTrials` and 20 for
+ * `searchTerminatedPriorTrials`; we never walk `nextPageToken`.
  */
 
 import type {
@@ -48,13 +51,10 @@ const BASE_BACKOFF_MS = 1000;
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUSES = new Set([429, 503]);
 
-const FIELDS = [
+const TRIAL_CANDIDATE_FIELDS = [
   "protocolSection.identificationModule.nctId",
   "protocolSection.identificationModule.briefTitle",
   "protocolSection.statusModule.overallStatus",
-  "protocolSection.statusModule.whyStopped",
-  "protocolSection.statusModule.lastKnownStatus",
-  "protocolSection.statusModule.completionDateStruct.date",
   "protocolSection.descriptionModule.briefSummary",
   "protocolSection.conditionsModule.conditions",
   "protocolSection.designModule.phases",
@@ -65,6 +65,17 @@ const FIELDS = [
   "protocolSection.eligibilityModule.stdAges",
   "protocolSection.eligibilityModule.sex",
   "protocolSection.contactsLocationsModule.locations",
+].join("|");
+
+const TERMINATED_TRIAL_FIELDS = [
+  "protocolSection.identificationModule.nctId",
+  "protocolSection.identificationModule.briefTitle",
+  "protocolSection.statusModule.overallStatus",
+  "protocolSection.statusModule.whyStopped",
+  "protocolSection.statusModule.completionDateStruct.date",
+  "protocolSection.conditionsModule.conditions",
+  "protocolSection.designModule.phases",
+  "protocolSection.armsInterventionsModule.interventions",
 ].join("|");
 
 export type CtgQuery = {
@@ -95,7 +106,7 @@ export async function searchTerminatedPriorTrials(
   params.set("query.term", args.condition);
   params.set("filter.overallStatus", TERMINATED_STATUSES);
   params.set("pageSize", String(args.pageSize ?? TERMINATED_PAGE_SIZE));
-  params.set("fields", FIELDS);
+  params.set("fields", TERMINATED_TRIAL_FIELDS);
   const url = `${BASE_URL}?${params.toString()}`;
 
   const res = await fetchWithRetry(url);
@@ -147,7 +158,7 @@ function buildUrl(q: CtgQuery): string {
   }
   if (q.filters?.country) params.set("query.locn", q.filters.country);
   params.set("pageSize", String(q.pageSize ?? DEFAULT_PAGE_SIZE));
-  params.set("fields", FIELDS);
+  params.set("fields", TRIAL_CANDIDATE_FIELDS);
   return `${BASE_URL}?${params.toString()}`;
 }
 
@@ -191,7 +202,6 @@ type CtgStudy = {
     statusModule?: {
       overallStatus?: string;
       whyStopped?: string;
-      lastKnownStatus?: string;
       completionDateStruct?: { date?: string };
     };
     descriptionModule?: { briefSummary?: string };

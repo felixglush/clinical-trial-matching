@@ -164,7 +164,7 @@ describe("searchClinicalTrials", () => {
 
 describe("searchTerminatedPriorTrials", () => {
   it("queries CT.gov with intr + term + status filter and projects whyStopped", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
@@ -184,8 +184,7 @@ describe("searchTerminatedPriorTrials", () => {
           },
         ],
       }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    } as Response);
 
     const out = await searchTerminatedPriorTrials({
       intervention: "osimertinib",
@@ -205,26 +204,74 @@ describe("searchTerminatedPriorTrials", () => {
       },
     ]);
 
-    const calledUrl = fetchMock.mock.calls[0][0] as string;
+    const calledUrl = spy.mock.calls[0]![0] as string;
     expect(calledUrl).toContain("query.intr=osimertinib");
     expect(calledUrl).toContain("query.term=non-small+cell+lung+cancer");
     expect(calledUrl).toContain("filter.overallStatus=TERMINATED%7CWITHDRAWN%7CSUSPENDED");
     expect(calledUrl).toContain("protocolSection.statusModule.whyStopped");
-    vi.unstubAllGlobals();
   });
 
   it("returns [] when CT.gov returns no studies", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+    vi.spyOn(global, "fetch").mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({ studies: [] }),
-    }));
+    } as Response);
 
     const out = await searchTerminatedPriorTrials({
       intervention: "obscuredrug",
       condition: "rare disease",
     });
     expect(out).toEqual([]);
-    vi.unstubAllGlobals();
+  });
+
+  it("drops studies whose overallStatus is not TERMINATED/WITHDRAWN/SUSPENDED", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        studies: [
+          {
+            protocolSection: {
+              identificationModule: { nctId: "NCT00000001", briefTitle: "Completed trial" },
+              statusModule: { overallStatus: "COMPLETED" },
+              conditionsModule: { conditions: [] },
+              armsInterventionsModule: { interventions: [] },
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const out = await searchTerminatedPriorTrials({
+      intervention: "drug",
+      condition: "disease",
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("drops studies missing nctId", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        studies: [
+          {
+            protocolSection: {
+              identificationModule: {},
+              statusModule: { overallStatus: "TERMINATED" },
+              conditionsModule: { conditions: [] },
+              armsInterventionsModule: { interventions: [] },
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const out = await searchTerminatedPriorTrials({
+      intervention: "drug",
+      condition: "disease",
+    });
+    expect(out).toEqual([]);
   });
 });
