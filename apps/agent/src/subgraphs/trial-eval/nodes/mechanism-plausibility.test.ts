@@ -390,7 +390,11 @@ describe("mechanismPlausibility — Path B literature integration (v1.5)", () =>
             abstractExcerpt: "abs",
           },
         ],
-        counterEvidence: [],
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: null,
+          terminatedPriorTrials: [],
+        },
       }),
     );
     expect(out.mechanismScore).toBe(70);
@@ -415,7 +419,20 @@ describe("mechanismPlausibility — Path B literature integration (v1.5)", () =>
     });
     const out = await mechanismPlausibility(
       state({
-        counterEvidence: [{ pmid: "X1", title: "t", url: "u", pubtype: [] }],
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: null,
+          terminatedPriorTrials: [
+            {
+              nctId: "NCT123",
+              briefTitle: "Prior trial",
+              conditions: [],
+              interventions: [],
+              status: "TERMINATED",
+              whyStopped: "Lack of efficacy.",
+            },
+          ],
+        },
       }),
     );
     expect(out.counterEvidenceAddressed).toBe(

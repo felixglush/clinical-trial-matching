@@ -102,7 +102,7 @@ export async function mechanismPlausibility(
         state.mechanisms,
         kgPaths,
         state.literatureSupport,
-        state.counterEvidence,
+        state.structuredCounterEvidence,
         repurposingContext ?? null,
       ),
     );
