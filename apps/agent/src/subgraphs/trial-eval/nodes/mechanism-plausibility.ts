@@ -1,23 +1,35 @@
 /**
  * # mechanism-plausibility (trial-eval subgraph)
  *
- * Channel-aware scoring of "does the trial's intervention plausibly
- * address the patient's mechanism?"
+ * Unified plausibility judge: given a candidate, the LLM scores how
+ * plausibly the trial's intervention(s) address the patient's mechanism,
+ * integrating up to three signal sources — each labeled with provenance
+ * in the prompt:
  *
- *   - Path A (candidate.discoveredVia includes "repurposing"):
- *     score = TxGNN predIndication × 100; rationale is templated from
- *     the source RepurposingCandidate (drug name, score, intermediate
- *     node names from `supportingPaths`). NO LLM CALL — TxGNN's score
- *     and the explanation path already carry the content; the
- *     synthesize-match narrate LLM handles user-facing prose.
+ *   - KG paths from `kg.pathBetween` (PrimeKG, mechanism-relevant edges).
+ *   - Tiered PubMed literature (supporting + counter-evidence).
+ *   - TxGNN repurposing prediction (only when a matching
+ *     `RepurposingCandidate` is in state — i.e. the candidate was surfaced
+ *     through the repurposing channel and search-trials' construction
+ *     invariant held).
  *
- *   - Path B (strategy-only):
- *     `kg.pathBetween` per (intervention, mechanism) pair; LLM scores
- *     and narrates. Null on LLM failure → synthesize-match maps to 50
- *     with a concern.
+ * The previous two-path design (LLM-free Path A for repurposing,
+ * LLM-judged Path B for strategy) was replaced because Path A discarded
+ * the literature signal even when literature-support had retrieved
+ * citations, and synthesize-match had to gate Path B-only concerns on
+ * the channel — which suppressed concerns whenever a fallthrough caused
+ * Path B to execute on a repurposing-channel candidate. The unified judge
+ * removes both asymmetries: every candidate gets the same shape of state
+ * written (mechanismEvidence, counterEvidenceAddressed) so downstream
+ * concerns can run universally.
+ *
+ * On LLM failure: if TxGNN context is available, fall back to TxGNN's
+ * templated score+rationale (preserves the old Path A behavior as a
+ * degraded mode). Otherwise return null and let synthesize-match surface
+ * the missing-mechanism signal.
  *
  * Spec: docs/superpowers/specs/2026-05-23-trial-eval-subgraph-design.md
- * → mechanism-plausibility (Path A / Path B).
+ * → mechanism-plausibility.
  */
 
 import type {
@@ -59,35 +71,74 @@ const judgeScore = llm.withStructuredOutput(MechanismPlausibilityJudgmentSchema)
 export async function mechanismPlausibility(
   state: TrialEvalStateType,
 ): Promise<Partial<TrialEvalStateType>> {
-  const { candidate, repurposingCandidates } = state;
-  if (candidate.discoveredVia.includes("repurposing")) {
-    const out = runPathA(state, repurposingCandidates);
-    if (out) return out;
-    // Path A's source wasn't in state — fall through to Path B.
-    console.warn(
-      `mechanism-plausibility: candidate ${candidate.nctId} claims repurposing channel but no matching RepurposingCandidate found; falling back to Path B`,
+  const repurposingContext = pickSource(
+    state.candidate.repurposingDrugIds,
+    state.repurposingCandidates,
+  );
+
+  // search-trials' construction guarantees that a repurposing-tagged
+  // candidate has a matching RepurposingCandidate; if it doesn't, the
+  // channel marker survived an upstream filter that dropped the supporting
+  // record. Log loudly but don't refuse to score — the LLM can still judge
+  // on KG paths + literature alone, and the prompt notes the missing TxGNN
+  // context honestly.
+  if (
+    !repurposingContext &&
+    state.candidate.discoveredVia.includes("repurposing")
+  ) {
+    console.error(
+      `mechanism-plausibility: ${state.candidate.nctId} tagged repurposing but no matching RepurposingCandidate in state (drugIds=${JSON.stringify(state.candidate.repurposingDrugIds)}); judging without TxGNN context`,
     );
   }
-  return await runPathB(state);
+
+  const kgPaths = await collectPaths(state);
+
+  try {
+    const judgment = await judgeScore.invoke(
+      mechanismScorePrompt(
+        state.patientProfile,
+        state.candidate,
+        state.mechanisms,
+        kgPaths,
+        state.literatureSupport,
+        state.counterEvidence,
+        repurposingContext ?? null,
+      ),
+    );
+    return {
+      mechanismScore: Math.max(0, Math.min(100, Math.round(judgment.score))),
+      mechanismRationale: judgment.rationale,
+      mechanismEvidence: judgment.evidence,
+      counterEvidenceAddressed: judgment.counterEvidenceAddressed ?? null,
+    };
+  } catch (err) {
+    // Dump the full error object so structured-output parse failures
+    // surface their schema/HTTP cause; this is the main diagnostic for
+    // recurring Haiku failures on this schema.
+    console.warn(
+      `mechanism-plausibility: LLM failed for ${state.candidate.nctId}: ${errorMessage(err)}`,
+      err,
+    );
+    if (repurposingContext) {
+      // Degraded mode: TxGNN's prior gives us a usable score and a
+      // templated rationale. Better than null when we have it.
+      return {
+        mechanismScore: Math.round((repurposingContext.predIndication ?? 0) * 100),
+        mechanismRationale: templatedTxgnnRationale(repurposingContext),
+        mechanismEvidence: [],
+        counterEvidenceAddressed: null,
+      };
+    }
+    return {
+      mechanismScore: null,
+      mechanismRationale: null,
+      mechanismEvidence: [],
+      counterEvidenceAddressed: null,
+    };
+  }
 }
 
-// ---------- Path A — repurposing channel (LLM-free) ----------
-
-// Returns null when no matching RepurposingCandidate exists; caller
-// falls back to Path B. Otherwise returns the Partial state directly.
-function runPathA(
-  state: TrialEvalStateType,
-  repurposingCandidates: RepurposingCandidate[],
-): Partial<TrialEvalStateType> | null {
-  const source = pickSource(state.candidate.repurposingDrugIds, repurposingCandidates);
-  if (!source) return null;
-
-  const mechanismScore = Math.round((source.predIndication ?? 0) * 100);
-  return {
-    mechanismScore,
-    mechanismRationale: templatedRationale(source),
-  };
-}
+// ---------- Helpers ----------
 
 function pickSource(
   drugIds: readonly string[],
@@ -100,22 +151,18 @@ function pickSource(
   );
 }
 
-// Build the Path A rationale string with optional intermediate-node
-// context from the TxGNN explanation path. Example outputs:
-//
-//   "TxGNN predicted osimertinib for non-small cell lung carcinoma
-//    (indication 0.92); via EGFR / ERBB signaling pathway."
-//
-//   "TxGNN predicted metformin for type 2 diabetes mellitus
-//    (indication 0.88); no TxGNN explanation path available."
-function templatedRationale(source: RepurposingCandidate): string {
+// LLM-failure fallback rationale. Mirrors the shape the old Path A
+// produced so downstream UI doesn't see a structural change when the
+// judge is unavailable. The "(LLM judge unavailable...)" suffix makes
+// the degraded mode visible to anyone reading the match.
+function templatedTxgnnRationale(source: RepurposingCandidate): string {
   const score = (source.predIndication ?? 0).toFixed(2);
   const indications = source.originalIndications.join(", ") || "(unknown)";
   const pathSummary =
     source.supportingPaths.length > 0
       ? `via ${formatPathSummary(source.supportingPaths[0]!)}`
       : "no TxGNN explanation path available";
-  return `TxGNN predicted ${source.drug.name} for ${indications} (indication ${score}); ${pathSummary}.`;
+  return `TxGNN predicted ${source.drug.name} for ${indications} (indication ${score}); ${pathSummary} (LLM judge unavailable; fell back to TxGNN score).`;
 }
 
 // Pick the intermediate node names from a KG path, skipping the drug
@@ -127,47 +174,6 @@ function formatPathSummary(path: KGPath): string {
     .slice(1, -1)
     .map((n) => n.name)
     .join(" / ");
-}
-
-// ---------- Path B — strategy channel ----------
-
-async function runPathB(
-  state: TrialEvalStateType,
-): Promise<Partial<TrialEvalStateType>> {
-  const kgPaths = await collectPaths(state);
-  try {
-    const judgment = await judgeScore.invoke(
-      mechanismScorePrompt(
-        state.patientProfile,
-        state.candidate,
-        state.mechanisms,
-        kgPaths,
-        state.literatureSupport,
-        state.counterEvidence,
-      ),
-    );
-    return {
-      mechanismScore: Math.max(0, Math.min(100, Math.round(judgment.score))),
-      mechanismRationale: judgment.rationale,
-      mechanismEvidence: judgment.evidence,
-      counterEvidenceAddressed: judgment.counterEvidenceAddressed ?? null,
-    };
-  } catch (err) {
-    // Dump the full error object (not just .message) so structured-output
-    // parse failures surface their schema/HTTP cause for diagnosis. Pinning
-    // down the root cause of repeated Haiku failures on this schema requires
-    // err.cause, err.stack, and any langchain-attached llmOutput.
-    console.warn(
-      `mechanism-plausibility (Path B): LLM failed for ${state.candidate.nctId}: ${errorMessage(err)} (null score)`,
-      err,
-    );
-    return {
-      mechanismScore: null,
-      mechanismRationale: null,
-      mechanismEvidence: [],
-      counterEvidenceAddressed: null,
-    };
-  }
 }
 
 async function collectPaths(state: TrialEvalStateType): Promise<KGPath[]> {

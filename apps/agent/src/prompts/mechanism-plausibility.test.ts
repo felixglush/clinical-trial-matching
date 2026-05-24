@@ -105,14 +105,14 @@ function counterCitation(): Citation {
 
 describe("mechanismScorePrompt (Path B)", () => {
   it("includes trial interventions and patient mechanisms", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], []);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], [], null);
     expect(out).toContain("Osimertinib");
     expect(out).toContain("EGFR");
     expect(out).toContain("ERBB signaling pathway");
   });
 
   it("includes KG paths in a clearly labeled block", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], []);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], [], null);
     expect(out).toContain("KG path");
     expect(out).toContain("DB09330");
     expect(out).toContain("target");
@@ -120,7 +120,7 @@ describe("mechanismScorePrompt (Path B)", () => {
   });
 
   it("calls out the no-path case explicitly", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], []);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], [], null);
     expect(out).toMatch(/no kg path/i);
   });
 });
@@ -131,6 +131,7 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation(), tier2Citation(), tier3Citation()],
       [],
+      null,
     );
     expect(out).toContain("Tier-1");
     expect(out).toContain("Tier-2");
@@ -145,6 +146,7 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation(), tier3Citation()],
       [],
+      null,
     );
     expect(out).toContain("RCT showed osimertinib");      // Tier-1 abstract shown
     expect(out).not.toContain("should NOT appear");         // Tier-3 abstract hidden
@@ -155,6 +157,7 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation()],
       [],
+      null,
     );
     expect(without).toContain("No counter-evidence retrieved");
 
@@ -162,15 +165,99 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation()],
       [counterCitation()],
+      null,
     );
     expect(withCounter).toContain("halted due to futility");
     expect(withCounter).toContain("X1");
   });
 
   it("instructs LLM to weight Tier-1 > Tier-2 > Tier-3 and address counter-evidence", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], []);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], [], null);
     expect(out).toMatch(/Tier-1.*Tier-2.*Tier-3/s);
     expect(out).toMatch(/counterEvidenceAddressed/);
+  });
+});
+
+describe("mechanismScorePrompt — discovery-channel provenance block", () => {
+  function repurposingCandidate(): import("@clinical-trial-matching/shared").RepurposingCandidate {
+    return {
+      drug: { id: "DB09330", name: "osimertinib", type: "drug" },
+      originalIndications: ["non-small cell lung carcinoma"],
+      rationale: "",
+      supportingPaths: [
+        {
+          nodes: [
+            { id: "DB09330", name: "osimertinib", type: "drug" },
+            { id: "EGFR", name: "EGFR", type: "gene_protein" },
+            { id: "MONDO:0005233", name: "NSCLC", type: "disease" },
+          ],
+          edges: [
+            { source: "DB09330", target: "EGFR", relation: "target" },
+            { source: "EGFR", target: "MONDO:0005233", relation: "associated with" },
+          ],
+        },
+      ],
+      predIndication: 0.92,
+      predContraindication: 0.05,
+    };
+  }
+
+  it("strategy-only candidate: announces strategy channel + explicit 'no TxGNN prediction'", () => {
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], [], null);
+    expect(out).toMatch(/Discovery channel\(s\): strategy/);
+    expect(out).toMatch(/no TxGNN repurposing prediction is associated/);
+  });
+
+  it("repurposing candidate with TxGNN context: includes drug, scores, original indications, explanation path", () => {
+    const repurposingTrial: TrialCandidate = {
+      ...trial(),
+      discoveredVia: ["repurposing"],
+      repurposingDrugIds: ["DB09330"],
+    };
+    const out = mechanismScorePrompt(
+      profile(), repurposingTrial, [mech()], [], [], [], repurposingCandidate(),
+    );
+    expect(out).toMatch(/Discovery channel\(s\): repurposing/);
+    expect(out).toMatch(/TxGNN repurposing prediction/);
+    expect(out).toContain("osimertinib");
+    expect(out).toContain("DB09330");
+    expect(out).toContain("0.92"); // predIndication
+    expect(out).toContain("0.05"); // predContraindication
+    expect(out).toContain("non-small cell lung carcinoma");
+    expect(out).toContain("EGFR"); // from explanation path
+  });
+
+  it("dual-channel candidate: prompt lists both channels", () => {
+    const dualTrial: TrialCandidate = {
+      ...trial(),
+      discoveredVia: ["strategy", "repurposing"],
+      repurposingDrugIds: ["DB09330"],
+    };
+    const out = mechanismScorePrompt(
+      profile(), dualTrial, [mech()], [], [], [], repurposingCandidate(),
+    );
+    expect(out).toMatch(/Discovery channel\(s\): strategy \+ repurposing/);
+    expect(out).toMatch(/TxGNN repurposing prediction/);
+  });
+
+  it("repurposing-tagged candidate with no matching TxGNN record: prompt names the gap honestly (no fabricated TxGNN block)", () => {
+    const repurposingTrial: TrialCandidate = {
+      ...trial(),
+      discoveredVia: ["repurposing"],
+      repurposingDrugIds: ["DB09330"],
+    };
+    const out = mechanismScorePrompt(
+      profile(), repurposingTrial, [mech()], [], [], [], null,
+    );
+    expect(out).toMatch(/no matching TxGNN prediction record/i);
+    expect(out).not.toMatch(/predIndication/);
+  });
+
+  it("instructions section tells the LLM how to weigh TxGNN vs literature when they disagree", () => {
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], [], null);
+    expect(out).toMatch(/TxGNN/);
+    expect(out).toMatch(/disagree/i);
+    expect(out).toMatch(/favor the literature/i);
   });
 });
 

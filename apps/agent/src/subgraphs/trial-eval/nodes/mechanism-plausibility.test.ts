@@ -107,37 +107,85 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
   };
 }
 
-describe("mechanismPlausibility — Path A (repurposing channel, LLM-free)", () => {
-  it("uses TxGNN predIndication × 100 as the score; templated rationale with path summary; LLM never called", async () => {
+describe("mechanismPlausibility — TxGNN context integration (repurposing channel)", () => {
+  it("passes TxGNN provenance (drug, predIndication, originalIndications, supporting path) into the prompt", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 88, rationale: "TxGNN + KG agree.", evidence: [] });
+    await mechanismPlausibility(
+      state({
+        candidate: trial(["repurposing"], ["DB09330"]),
+        repurposingCandidates: [repurposing("DB09330", 0.92, true)],
+      }),
+    );
+    expect(__invoke).toHaveBeenCalledTimes(1);
+    const prompt = __invoke.mock.calls[0]![0] as string;
+    // Provenance block names the channel.
+    expect(prompt).toMatch(/Discovery channel/i);
+    expect(prompt).toMatch(/repurposing/i);
+    // TxGNN provenance: drug, score, original indication, explanation path.
+    expect(prompt).toContain("osimertinib");
+    expect(prompt).toContain("DB09330");
+    expect(prompt).toContain("0.92");
+    expect(prompt).toContain("nsclc");
+    expect(prompt).toContain("EGFR");
+    // The LLM's score (not predIndication × 100) is used.
+  });
+
+  it("uses the LLM's score, not predIndication × 100", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({
+      score: 73,
+      rationale: "TxGNN suggests; literature partially supports.",
+      evidence: [{ pmid: "P1", quote: "q", supports: "weak" }],
+    });
     const out = await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330"]),
         repurposingCandidates: [repurposing("DB09330", 0.92, true)],
       }),
     );
-    expect(out.mechanismScore).toBe(92);
-    // Templated rationale references drug name + score + intermediate node names from supportingPaths.
-    expect(out.mechanismRationale).toContain("osimertinib");
-    expect(out.mechanismRationale).toContain("0.92");
-    expect(out.mechanismRationale).toContain("EGFR");
-    // CRITICAL: no LLM call in Path A.
-    expect(__invoke).not.toHaveBeenCalled();
+    expect(out.mechanismScore).toBe(73);
+    expect(out.mechanismRationale).toContain("literature");
+    expect(out.mechanismEvidence).toEqual([{ pmid: "P1", quote: "q", supports: "weak" }]);
   });
 
-  it("templates 'no TxGNN explanation path available' when supportingPaths is empty", async () => {
-    const out = await mechanismPlausibility(
+  it("prompt notes (none available) for TxGNN explanation path when supportingPaths is empty", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 50, rationale: "weak", evidence: [] });
+    await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330"]),
         repurposingCandidates: [repurposing("DB09330", 0.85, false)],
       }),
     );
-    expect(out.mechanismScore).toBe(85);
-    expect(out.mechanismRationale).toMatch(/no TxGNN explanation path available/i);
-    expect(__invoke).not.toHaveBeenCalled();
+    const prompt = __invoke.mock.calls[0]![0] as string;
+    expect(prompt).toMatch(/TxGNN explanation path:\s*\(none available\)/);
   });
 
   it("picks the highest predIndication when multiple repurposingDrugIds match", async () => {
-    const out = await mechanismPlausibility(
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB",
+      name: "drug",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 70, rationale: "ok", evidence: [] });
+    await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330", "DB00072"]),
         repurposingCandidates: [
@@ -146,9 +194,33 @@ describe("mechanismPlausibility — Path A (repurposing channel, LLM-free)", () 
         ],
       }),
     );
-    expect(out.mechanismScore).toBe(99);
-    expect(out.mechanismRationale).toContain("trastuzumab");
-    expect(__invoke).not.toHaveBeenCalled();
+    const prompt = __invoke.mock.calls[0]![0] as string;
+    // Highest predIndication (0.99 → trastuzumab) wins the TxGNN context slot.
+    expect(prompt).toContain("trastuzumab");
+    expect(prompt).toContain("0.99");
+  });
+
+  it("on LLM failure with TxGNN context: falls back to TxGNN templated score+rationale", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockRejectedValue(new Error("LLM down"));
+    const out = await mechanismPlausibility(
+      state({
+        candidate: trial(["repurposing"], ["DB09330"]),
+        repurposingCandidates: [repurposing("DB09330", 0.92, true)],
+      }),
+    );
+    expect(out.mechanismScore).toBe(92); // round(0.92 * 100)
+    expect(out.mechanismRationale).toContain("osimertinib");
+    expect(out.mechanismRationale).toContain("LLM judge unavailable");
+    expect(out.mechanismEvidence).toEqual([]);
+    expect(out.counterEvidenceAddressed).toBeNull();
+    warn.mockRestore();
   });
 });
 
@@ -209,17 +281,83 @@ describe("mechanismPlausibility — Path B (strategy channel)", () => {
   });
 });
 
-describe("mechanismPlausibility — both channels", () => {
-  it("Path A takes precedence when discoveredVia includes 'repurposing'; LLM never called", async () => {
-    const out = await mechanismPlausibility(
+describe("mechanismPlausibility — dual-channel candidates", () => {
+  it("for discoveredVia=['strategy','repurposing'], the prompt advertises both channels and includes TxGNN context", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 85, rationale: "both signals agree", evidence: [] });
+    await mechanismPlausibility(
       state({
         candidate: trial(["strategy", "repurposing"], ["DB09330"]),
         repurposingCandidates: [repurposing("DB09330", 0.92, true)],
       }),
     );
-    expect(out.mechanismScore).toBe(92);
-    expect(out.mechanismRationale).toContain("osimertinib");
-    expect(__invoke).not.toHaveBeenCalled();
+    const prompt = __invoke.mock.calls[0]![0] as string;
+    expect(prompt).toMatch(/strategy/);
+    expect(prompt).toMatch(/repurposing/);
+    expect(prompt).toContain("osimertinib");
+    expect(prompt).toContain("0.92");
+  });
+
+  // Invariant: search-trials only tags a candidate "repurposing" when its
+  // drugId is in state.repurposingCandidates. If that's violated (a future
+  // filter drops the supporting RepurposingCandidate but leaves the channel
+  // marker), the LLM still runs but the prompt notes the missing TxGNN
+  // context honestly rather than fabricating it.
+  it("when discoveredVia=['repurposing'] but no matching RepurposingCandidate, judges on KG+lit alone and prompt notes the missing TxGNN record", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 55, rationale: "no TxGNN", evidence: [] });
+    const out = await mechanismPlausibility(
+      state({
+        candidate: trial(["repurposing"], ["DB09330"]),
+        repurposingCandidates: [], // invariant violated
+      }),
+    );
+    expect(__invoke).toHaveBeenCalledTimes(1);
+    const prompt = __invoke.mock.calls[0]![0] as string;
+    expect(prompt).toMatch(/no matching TxGNN/i);
+    expect(out.mechanismScore).toBe(55);
+    expect(err).toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it("for strategy-only candidates, the prompt explicitly states no TxGNN prediction is associated", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB",
+      name: "drug",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 60, rationale: "ok", evidence: [] });
+    await mechanismPlausibility(state({ candidate: trial(["strategy"]) }));
+    const prompt = __invoke.mock.calls[0]![0] as string;
+    expect(prompt).toMatch(/Strategy channel/i);
+    expect(prompt).toMatch(/no TxGNN repurposing prediction/i);
+  });
+
+  it("on LLM failure with no TxGNN context: returns null score", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB",
+      name: "drug",
+      type: "drug",
+    });
+    __invoke.mockRejectedValue(new Error("LLM down"));
+    const out = await mechanismPlausibility(state({ candidate: trial(["strategy"]) }));
+    expect(out.mechanismScore).toBeNull();
+    expect(out.mechanismRationale).toBeNull();
+    warn.mockRestore();
   });
 });
 
@@ -280,17 +418,31 @@ describe("mechanismPlausibility — Path B literature integration (v1.5)", () =>
     );
   });
 
-  it("Path A is unchanged — no mechanismEvidence written for repurposing channel", async () => {
+  it("repurposing-channel candidates also get mechanismEvidence from the unified judge when literature is available", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB09330",
+      name: "osimertinib",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({
+      score: 90,
+      rationale: "TxGNN + literature converge",
+      evidence: [{ pmid: "X", quote: "supports the mechanism", supports: "yes" }],
+    });
     const out = await mechanismPlausibility(
       state({
         candidate: trial(["repurposing"], ["DB09330"]),
         repurposingCandidates: [repurposing("DB09330", 0.92, true)],
-        literatureSupport: [{ pmid: "X", title: "t", url: "u", pubtype: [] }],
+        literatureSupport: [
+          { pmid: "X", title: "t", url: "u", pubtype: ["Randomized Controlled Trial"], abstractExcerpt: "abs" },
+        ],
       }),
     );
-    expect(out.mechanismScore).toBe(92);
-    expect(out.mechanismEvidence).toBeUndefined(); // not written by Path A
-    expect(__invoke).not.toHaveBeenCalled(); // still LLM-free
+    expect(out.mechanismScore).toBe(90);
+    expect(out.mechanismEvidence).toEqual([
+      { pmid: "X", quote: "supports the mechanism", supports: "yes" },
+    ]);
   });
 });
 

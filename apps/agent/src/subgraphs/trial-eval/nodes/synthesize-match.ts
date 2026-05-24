@@ -1,7 +1,7 @@
 /**
  * # synthesize-match (trial-eval subgraph)
  *
- * Compose the final `TrialMatch`. Four steps:
+ * Compose the final `TrialMatch`. Steps:
  *
  *   1. Deterministic formula computes `score` from two pillars
  *      (eligibility, mechanism). Literature is NOT a formula input —
@@ -9,18 +9,21 @@
  *      count does not affect ranking. Eligibility-gated: `ineligible → 0`,
  *      `likely_ineligible → min(25, weightedSum)`, otherwise the sum.
  *   2. LLM narrates `summary` + `concerns` given the sub-scores and the
- *      mechanism rationale (which itself cites supporting papers). The
- *      narrate prompt no longer carries a separate literature block —
- *      Task 5 restructure folded citation references into the rationale.
- *      The LLM does NOT touch the score.
+ *      mechanism rationale (which itself cites supporting papers).
+ *      `discoveredViaRepurposing` flows into the narration prompt so the
+ *      prose can reference the discovery channel.
  *   3. PMID-echo filter on `state.mechanismEvidence`: drop any entry
  *      whose `pmid` is not present in `literatureSupport ∪ counterEvidence`.
  *      This guards against the mechanism judge hallucinating PMIDs.
- *   4. Templated `repurposingRationale` when the candidate came from
+ *   4. Universal Path B-shaped concerns: counter-evidence unaddressed,
+ *      and no literature-cited evidence. Both run for every candidate
+ *      because the unified mechanism judge populates the relevant state
+ *      regardless of discovery channel (previously these were gated on
+ *      `!discoveredViaRepurposing`, which silently suppressed concerns
+ *      whenever Path B ran on a repurposing-tagged candidate).
+ *   5. Templated `repurposingRationale` when the candidate came from
  *      the repurposing channel.
- *   5. Assemble the TrialMatch from the candidate, the LLM narration,
- *      and the deterministic components — including filtered evidence
- *      and counter-evidence-addressed propagated from state.
+ *   6. Assemble the TrialMatch.
  *
  * Contract: ALWAYS returns a TrialMatch — the parent's `matches`
  * concat reducer can't distinguish a missing match from a fanned-out
@@ -105,22 +108,18 @@ export async function synthesizeMatch(
     return ok;
   });
 
-  // Both concerns below are Path B-only: Path A (repurposing channel)
-  // never invokes the mechanism judge, so `mechanismEvidence` and
-  // `counterEvidenceAddressed` are structurally empty/null for it.
-  if (!discoveredViaRepurposing) {
-    // Counter-evidence retrieved but mechanism judgment did not address it —
-    // judge either skipped the negative-results pile or returned a null
-    // `counterEvidenceAddressed`.
-    if (state.counterEvidence.length > 0 && !state.counterEvidenceAddressed) {
-      concerns.push("counter-evidence present but not addressed in mechanism judgment");
-    }
-    // Mechanism scored but no literature-cited evidence survived the
-    // PMID-echo filter — the score rests on the LLM's prior, not on the
-    // retrieved corpus.
-    if (filteredEvidence.length === 0 && state.mechanismScore !== null) {
-      concerns.push("no literature-cited evidence for mechanism");
-    }
+  // The unified mechanism judge populates `mechanismEvidence` and
+  // `counterEvidenceAddressed` for every candidate (regardless of
+  // discovery channel), so these concerns now run universally. Both are
+  // also accurate when the judge LLM failed and we fell back to a
+  // TxGNN-only score: in that degraded mode there is genuinely no
+  // literature-cited evidence backing the score, and any retrieved
+  // counter-evidence was genuinely not addressed.
+  if (state.counterEvidence.length > 0 && !state.counterEvidenceAddressed) {
+    concerns.push("counter-evidence present but not addressed in mechanism judgment");
+  }
+  if (filteredEvidence.length === 0 && state.mechanismScore !== null) {
+    concerns.push("no literature-cited evidence for mechanism");
   }
 
   const match: TrialMatch = {

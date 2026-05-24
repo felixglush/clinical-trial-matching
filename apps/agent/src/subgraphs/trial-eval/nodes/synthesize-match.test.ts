@@ -264,12 +264,14 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     expect(out.matches![0]!.counterEvidenceAddressed).toBe("Population differs.");
   });
 
-  // Path A (repurposing channel) never calls the mechanism-plausibility LLM,
-  // so it cannot populate `mechanismEvidence` or `counterEvidenceAddressed`.
-  // The two Path B-shaped concerns ("counter-evidence present but not
-  // addressed", "no literature-cited evidence for mechanism") must be gated
-  // on Path B; otherwise every Path A match gets them spuriously.
-  it("does NOT flag 'counter-evidence unaddressed' concern for Path A (repurposing) candidates", async () => {
+  // The unified mechanism judge populates mechanismEvidence and
+  // counterEvidenceAddressed for every candidate regardless of channel,
+  // so the two Path B-shaped concerns now run universally (no
+  // !discoveredViaRepurposing gate). Previously these were suppressed
+  // for repurposing-channel candidates because the old Path A produced
+  // structurally-empty mechanismEvidence and the gate avoided spurious
+  // concerns; the unified judge eliminates that asymmetry.
+  it("flags 'counter-evidence unaddressed' concern for repurposing-channel candidates too", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
       state({
@@ -280,22 +282,22 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
         counterEvidenceAddressed: null,
       }),
     );
-    expect(out.matches![0]!.concerns).not.toContain(
+    expect(out.matches![0]!.concerns).toContain(
       "counter-evidence present but not addressed in mechanism judgment",
     );
   });
 
-  it("does NOT flag 'no literature-cited evidence' concern for Path A (repurposing) candidates", async () => {
+  it("flags 'no literature-cited evidence' concern for repurposing-channel candidates when judge returned no surviving evidence", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
       state({
         candidate: trial({ discoveredVia: ["repurposing"], repurposingDrugIds: ["DB1"] }),
-        mechanismScore: 92, // Path A always sets a score from TxGNN
-        mechanismEvidence: [], // Path A never populates this
+        mechanismScore: 92,
+        mechanismEvidence: [], // judge returned no evidence
         literatureSupport: [citation("1")],
       }),
     );
-    expect(out.matches![0]!.concerns).not.toContain(
+    expect(out.matches![0]!.concerns).toContain(
       "no literature-cited evidence for mechanism",
     );
   });
