@@ -13,7 +13,7 @@
  *      `discoveredViaRepurposing` flows into the narration prompt so the
  *      prose can reference the discovery channel.
  *   3. PMID-echo filter on `state.mechanismEvidence`: drop any entry
- *      whose `pmid` is not present in `literatureSupport ∪ counterEvidence`.
+ *      whose `pmid` is not present in `literatureSupport`.
  *      This guards against the mechanism judge hallucinating PMIDs.
  *   4. Universal Path B-shaped concerns: counter-evidence unaddressed,
  *      and no literature-cited evidence. Both run for every candidate
@@ -31,6 +31,12 @@
  *
  * Spec: docs/superpowers/specs/2026-05-23-trial-eval-subgraph-design.md
  * → synthesize-match (Steps 1–4) + score-formula row.
+ *
+ * After the counter-evidence redesign (Task 9):
+ *   - PMID-echo set uses `literatureSupport` only — structured
+ *     counter-evidence has no PMIDs.
+ *   - "Counter-evidence unaddressed" concern fires when ANY non-empty
+ *     sub-field of `structuredCounterEvidence` is present.
  */
 
 import type {
@@ -93,17 +99,20 @@ export async function synthesizeMatch(
   }
 
   // PMID-echo filter: only keep mechanismEvidence entries whose pmid was
-  // actually retrieved in literatureSupport or counterEvidence. Guards
-  // against the mechanism judge hallucinating PMIDs.
-  const knownPmids = new Set<string>([
-    ...state.literatureSupport.map((c) => c.pmid),
-    ...state.counterEvidence.map((c) => c.pmid),
-  ]);
+  // actually retrieved in literatureSupport. Guards against the mechanism
+  // judge hallucinating PMIDs.
+  // PMID-echo set is supporting-literature only — structured
+  // counter-evidence has no PMIDs and `mechanismEvidence` legitimately
+  // only draws from supporting citations after the counter-evidence
+  // redesign.
+  const knownPmids = new Set<string>(
+    state.literatureSupport.map((c) => c.pmid),
+  );
   const filteredEvidence = state.mechanismEvidence.filter((e) => {
     const ok = knownPmids.has(e.pmid);
     if (!ok) {
       console.warn(
-        `synthesize-match: dropping mechanismEvidence with unknown pmid=${e.pmid} (not in literatureSupport or counterEvidence)`,
+        `synthesize-match: dropping mechanismEvidence with unknown pmid=${e.pmid} (not in literatureSupport)`,
       );
     }
     return ok;
@@ -116,7 +125,12 @@ export async function synthesizeMatch(
   // TxGNN-only score: in that degraded mode there is genuinely no
   // literature-cited evidence backing the score, and any retrieved
   // counter-evidence was genuinely not addressed.
-  if (state.counterEvidence.length > 0 && !state.counterEvidenceAddressed) {
+  const sce = state.structuredCounterEvidence;
+  const hasStructuredCounterEvidence =
+    sce.primeKgContraindications.length > 0 ||
+    sce.txGnnPredContraindication !== null ||
+    sce.terminatedPriorTrials.length > 0;
+  if (hasStructuredCounterEvidence && !state.counterEvidenceAddressed) {
     concerns.push("counter-evidence present but not addressed in mechanism judgment");
   }
   if (filteredEvidence.length === 0 && state.mechanismScore !== null) {

@@ -242,7 +242,7 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     ]);
   });
 
-  it("filters out evidence entries whose pmid is not in literatureSupport ∪ counterEvidence", async () => {
+  it("filters out evidence entries whose pmid is not in literatureSupport", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
@@ -265,9 +265,18 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
       state({
-        counterEvidence: [
-          { pmid: "X1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/X1/", pubtype: [] },
-        ],
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: null,
+          terminatedPriorTrials: [{
+            nctId: "NCT01234567",
+            briefTitle: "Prior failed trial",
+            conditions: ["NSCLC"],
+            interventions: ["Osimertinib"],
+            status: "TERMINATED",
+            whyStopped: "Lack of efficacy.",
+          }],
+        },
         counterEvidenceAddressed: null,
       }),
     );
@@ -280,9 +289,18 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(
       state({
-        counterEvidence: [
-          { pmid: "X1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/X1/", pubtype: [] },
-        ],
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: null,
+          terminatedPriorTrials: [{
+            nctId: "NCT01234567",
+            briefTitle: "Prior failed trial",
+            conditions: ["NSCLC"],
+            interventions: ["Osimertinib"],
+            status: "TERMINATED",
+            whyStopped: "Lack of efficacy.",
+          }],
+        },
         counterEvidenceAddressed: "Population differs.",
       }),
     );
@@ -301,9 +319,18 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     const out = await synthesizeMatch(
       state({
         candidate: trial({ discoveredVia: ["repurposing"], repurposingDrugIds: ["DB1"] }),
-        counterEvidence: [
-          { pmid: "X1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/X1/", pubtype: [] },
-        ],
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: null,
+          terminatedPriorTrials: [{
+            nctId: "NCT09876543",
+            briefTitle: "Prior failed repurposing trial",
+            conditions: ["NSCLC"],
+            interventions: ["Drug B"],
+            status: "TERMINATED",
+            whyStopped: "Lack of efficacy.",
+          }],
+        },
         counterEvidenceAddressed: null,
       }),
     );
