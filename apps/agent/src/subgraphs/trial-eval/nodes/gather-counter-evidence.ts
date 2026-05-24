@@ -16,8 +16,8 @@
  * sources resolve to empty arrays / null and the prompt notes their
  * absence.
  *
- * Replaces the PubMed sentiment-keyword OR-query that previously
- * populated `state.counterEvidence`. See
+ * Populates `state.structuredCounterEvidence`. Replaces the PubMed
+ * sentiment-keyword OR-query that previously populated `state.counterEvidence`. See
  * docs/superpowers/specs/2026-05-24-mechanism-counter-evidence-design.md.
  */
 

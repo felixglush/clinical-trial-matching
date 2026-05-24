@@ -53,10 +53,6 @@ export const TrialEvalState = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => [],
   }),
-  counterEvidence: Annotation<Citation[]>({
-    reducer: (_prev, next) => next,
-    default: () => [],
-  }),
   structuredCounterEvidence: Annotation<StructuredCounterEvidence>({
     reducer: (_prev, next) => next,
     default: () => ({

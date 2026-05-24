@@ -64,7 +64,6 @@ function baseState(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateT
     mechanismScore: null,
     mechanismRationale: null,
     literatureSupport: [],
-    counterEvidence: [],
     structuredCounterEvidence: {
       primeKgContraindications: [],
       txGnnPredContraindication: null,

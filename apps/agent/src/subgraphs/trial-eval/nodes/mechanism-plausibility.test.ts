@@ -99,7 +99,6 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     mechanismRationale: null,
     literatureSupport: [],
     evidenceAttempts: 0,
-    counterEvidence: [],
     structuredCounterEvidence: {
       primeKgContraindications: [],
       txGnnPredContraindication: null,
@@ -367,7 +366,7 @@ describe("mechanismPlausibility — dual-channel candidates", () => {
 });
 
 describe("mechanismPlausibility — Path B literature integration (v1.5)", () => {
-  it("passes literatureSupport and counterEvidence into mechanismScorePrompt", async () => {
+  it("passes literatureSupport and structuredCounterEvidence into mechanismScorePrompt", async () => {
     vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
     vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
       id: "DB",

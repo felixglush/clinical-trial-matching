@@ -68,7 +68,6 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     mechanismRationale: "Drug X targets the relevant pathway.",
     literatureSupport: [citation("1"), citation("2"), citation("3")],
     evidenceAttempts: 1,
-    counterEvidence: [],
     structuredCounterEvidence: {
       primeKgContraindications: [],
       txGnnPredContraindication: null,
