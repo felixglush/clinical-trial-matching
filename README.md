@@ -82,7 +82,7 @@ Built with [LangGraph.js](https://langchain-ai.github.io/langgraphjs/). Deploys 
 - `gather-counter-evidence` — Collect structured biomedical counter-evidence: PrimeKG drug↔disease contraindication edges, TxGNN `predContraindication` (when surfaced via repurposing), and CT.gov terminated/withdrawn/suspended prior trials of the drug+condition with raw `whyStopped` text. Replaces the prior PubMed sentiment-keyword counter-query.
 - `decide-if-more-evidence` *(conditional edge)* — If literature coverage is thin and attempts remain, loop back to `literature-support` with a broader query.
 - `mechanism-plausibility` — KG path search (intervention → patient's condition); LLM scores how plausible the mechanism is, considering both supporting and counter-evidence.
-- `synthesize-match` — Combine eligibility + mechanism + literature + counter-evidence into a final `TrialMatch` with a combined score.
+- `synthesize-match` — Compute the deterministic score (`0.6·eligibility + 0.4·mechanism`); LLM narrates `summary` and `concerns` over the literature and structured counter-evidence; flag `counter-evidence present but not addressed` when the mechanism judge didn't reconcile a real negative signal.
 
 ## Data sources
 
