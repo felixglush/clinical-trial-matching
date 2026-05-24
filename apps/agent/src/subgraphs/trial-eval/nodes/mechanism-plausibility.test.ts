@@ -168,6 +168,14 @@ describe("mechanismPlausibility — Path B (strategy channel)", () => {
     __invoke.mockResolvedValue({ score: 75, rationale: "Direct path." });
     const out = await mechanismPlausibility(state({ candidate: trial(["strategy"]) }));
     expect(pathSpy).toHaveBeenCalled();
+    // Mechanism whitelist must be passed so noise edges (parent-child,
+    // contraindication, ...) never reach the LLM as "mechanism evidence".
+    const relTypes = pathSpy.mock.calls[0]![2] as readonly string[];
+    expect(relTypes).toContain("target");
+    expect(relTypes).toContain("ppi");
+    expect(relTypes).toContain("associated with");
+    expect(relTypes).not.toContain("parent-child");
+    expect(relTypes).not.toContain("contraindication");
     expect(out.mechanismScore).toBe(75);
     expect(out.mechanismRationale).toBe("Direct path.");
   });

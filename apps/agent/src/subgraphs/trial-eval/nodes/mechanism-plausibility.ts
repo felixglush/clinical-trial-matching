@@ -38,6 +38,22 @@ import { errorMessage } from "../../../util/error.js";
 const MAX_KG_PATHS_PER_PROMPT = 6;
 const PATHS_PER_PAIR = 3;
 
+// Whitelist of PrimeKG relationship types that carry mechanism meaning for
+// a drug → disease query. Deliberately excludes:
+//   - `parent-child`     : disease/gene taxonomy (not mechanism)
+//   - `contraindication` : negative signal — must not be framed as "mechanism evidence"
+//   - `synergistic interaction` : drug-drug (irrelevant to single-drug mechanism)
+const MECHANISM_REL_TYPES: readonly string[] = [
+  "target",
+  "enzyme",
+  "transporter",
+  "carrier",
+  "ppi",
+  "associated with",
+  "indication",
+  "off-label use",
+];
+
 const judgeScore = llm.withStructuredOutput(MechanismPlausibilityJudgmentSchema);
 
 export async function mechanismPlausibility(
@@ -186,7 +202,7 @@ async function collectPaths(state: TrialEvalStateType): Promise<KGPath[]> {
 
 async function safePathBetween(drugId: string, diseaseId: string): Promise<KGPath[]> {
   try {
-    return await pathBetween(drugId, diseaseId, 3, PATHS_PER_PAIR);
+    return await pathBetween(drugId, diseaseId, MECHANISM_REL_TYPES, 3, PATHS_PER_PAIR);
   } catch (err) {
     console.warn(`mechanism-plausibility: pathBetween(${drugId}, ${diseaseId}) failed: ${errorMessage(err)}`);
     return [];

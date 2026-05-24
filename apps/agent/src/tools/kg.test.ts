@@ -271,7 +271,7 @@ describe("pathBetween", () => {
       },
     ]);
     setDriver(driver);
-    const paths = await pathBetween("DB09330", "MONDO:0005233", 3, 5);
+    const paths = await pathBetween("DB09330", "MONDO:0005233", ["target", "associated with"], 3, 5);
     expect(paths).toHaveLength(1);
     expect(paths[0]!.nodes).toEqual([
       { id: "DB09330", name: "osimertinib", type: "drug" },
@@ -282,9 +282,16 @@ describe("pathBetween", () => {
       { source: "DB09330", target: "EGFR", relation: "target" },
       { source: "EGFR", target: "MONDO:0005233", relation: "associated with" },
     ]);
-    // Verify params are passed as integers via neo4j.int (LIMIT FLOAT trap).
-    expect(calls[0]!.params.maxHops).toMatchObject({ low: 3 });
+    // maxHops is interpolated as a Cypher literal (parameter binding is
+    // rejected at parse time for variable-length ranges); pathLimit is a
+    // proper parameter wrapped via neo4j.int (LIMIT FLOAT trap). The
+    // whitelist is passed as a parameter and applied via ALL(... IN $relTypes).
+    expect(calls[0]!.query).toContain("*1..3");
+    expect(calls[0]!.query).toContain("type(rel) IN $relTypes");
+    expect(calls[0]!.query).toContain("ORDER BY length(p)");
+    expect(calls[0]!.params.maxHops).toBeUndefined();
     expect(calls[0]!.params.pathLimit).toMatchObject({ low: 5 });
+    expect(calls[0]!.params.relTypes).toEqual(["target", "associated with"]);
   });
 
   it("returns [] on no paths (no throw)", async () => {
@@ -292,8 +299,22 @@ describe("pathBetween", () => {
       { query: "MATCH p = (a:Node", rows: [] },
     ]);
     setDriver(driver);
-    const paths = await pathBetween("DB09330", "MONDO:9999999");
+    const paths = await pathBetween("DB09330", "MONDO:9999999", ["target"]);
     expect(paths).toEqual([]);
+  });
+
+  it("rejects empty relTypes whitelist", async () => {
+    const { driver } = makeMockDriver([]);
+    setDriver(driver);
+    await expect(pathBetween("a", "b", [])).rejects.toThrow(/relTypes/);
+  });
+
+  it("rejects out-of-range or non-integer maxHops", async () => {
+    const { driver } = makeMockDriver([]);
+    setDriver(driver);
+    await expect(pathBetween("a", "b", ["target"], 0)).rejects.toThrow(/maxHops/);
+    await expect(pathBetween("a", "b", ["target"], 6)).rejects.toThrow(/maxHops/);
+    await expect(pathBetween("a", "b", ["target"], 1.5)).rejects.toThrow(/maxHops/);
   });
 });
 

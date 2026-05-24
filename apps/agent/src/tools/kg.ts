@@ -240,32 +240,51 @@ export { normalizeNodeType };
 
 // ---------- pathBetween ----------
 //
-// Variable-hop sample paths between two PrimeKG nodes. `LIMIT $pathLimit`
-// keeps the result bounded; `maxHops = 3` covers drug → gene → process →
-// disease and the symmetric form. PrimeKG edges are undirected (per
-// docs/primekg-querying.md) — the `*1..N` syntax matches both directions.
+// Variable-hop sample paths between two PrimeKG nodes. PrimeKG edges are
+// undirected (per docs/primekg-querying.md); the `*1..N` syntax matches both
+// directions. Paths are returned shortest-first (`ORDER BY length(p)`) so
+// the most direct connection surfaces before longer, hub-hopping walks.
 //
+// `relTypes` is a required whitelist of relationship types — without it the
+// query traverses noise edges like `parent-child` (disease taxonomy) and
+// `contraindication` (which a mechanism scorer must never see framed as
+// "mechanism evidence"). Callers pass the relationship set that matches
+// their domain (e.g. drug→disease mechanism: target/enzyme/ppi/...).
+//
+// Cypher requires literal integers in the variable-length range `*A..B`;
+// parameter binding (`*1..$maxHops`) is rejected at parse time. We validate
+// the bound and interpolate it as a literal. `pathLimit` stays a parameter.
 // `neo4j.int(...)` is required for the LIMIT param: the driver maps raw
 // JS numbers to FLOAT and Cypher LIMIT rejects FLOAT.
 
-const CYPHER_PATH_BETWEEN = `
-MATCH p = (a:Node {id: $fromId})-[*1..$maxHops]-(b:Node {id: $toId})
-RETURN p
-LIMIT $pathLimit
-` as const;
+const MAX_HOPS_CEILING = 5;
 
 export async function pathBetween(
   fromId: string,
   toId: string,
+  relTypes: readonly string[],
   maxHops = 3,
   pathLimit = 5,
 ): Promise<KGPath[]> {
+  if (!Number.isInteger(maxHops) || maxHops < 1 || maxHops > MAX_HOPS_CEILING) {
+    throw new Error(`pathBetween: maxHops must be an integer in [1, ${MAX_HOPS_CEILING}], got ${maxHops}`);
+  }
+  if (relTypes.length === 0) {
+    throw new Error("pathBetween: relTypes must be a non-empty whitelist of relationship types");
+  }
+  const cypher = `
+MATCH p = (a:Node {id: $fromId})-[r*1..${maxHops}]-(b:Node {id: $toId})
+WHERE ALL(rel IN r WHERE type(rel) IN $relTypes)
+RETURN p
+ORDER BY length(p)
+LIMIT $pathLimit
+`;
   const session = openSession();
   try {
-    const result = await session.run(CYPHER_PATH_BETWEEN, {
+    const result = await session.run(cypher, {
       fromId,
       toId,
-      maxHops: neo4j.int(maxHops),
+      relTypes: [...relTypes],
       pathLimit: neo4j.int(pathLimit),
     });
     return result.records.map((r) => pathFromDriverPath(r.get("p")));
