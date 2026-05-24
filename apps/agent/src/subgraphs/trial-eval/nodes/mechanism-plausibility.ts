@@ -46,6 +46,7 @@ import { pathBetween, resolveDrugByName } from "../../../tools/kg.js";
 import { resolveSnomedCondition } from "../../../tools/snomed-mondo.js";
 import type { TrialEvalStateType } from "../state.js";
 import { errorMessage } from "../../../util/error.js";
+import { pickSource } from "../util/repurposing.js";
 
 const MAX_KG_PATHS_PER_PROMPT = 6;
 const PATHS_PER_PAIR = 3;
@@ -139,17 +140,6 @@ export async function mechanismPlausibility(
 }
 
 // ---------- Helpers ----------
-
-function pickSource(
-  drugIds: readonly string[],
-  candidates: RepurposingCandidate[],
-): RepurposingCandidate | undefined {
-  const matching = candidates.filter((rc) => drugIds.includes(rc.drug.id));
-  if (matching.length === 0) return undefined;
-  return matching.reduce((best, c) =>
-    (c.predIndication ?? 0) > (best.predIndication ?? 0) ? c : best,
-  );
-}
 
 // LLM-failure fallback rationale. Mirrors the shape the old Path A
 // produced so downstream UI doesn't see a structural change when the
