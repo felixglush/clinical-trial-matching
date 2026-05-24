@@ -11,7 +11,7 @@ vi.mock("../../../llm.js", () => {
 });
 
 import { eligibilityCheck } from "./eligibility-check.js";
-import type { TrialEvalStateType } from "../state.js";
+import { EMPTY_UNCLEAR_ELIGIBILITY, type TrialEvalStateType } from "../state.js";
 import type {
   PatientProfile,
   SafetyConcern,
@@ -69,7 +69,7 @@ function state(): TrialEvalStateType {
     candidate: trial(),
     mechanisms: [],
     repurposingCandidates: [],
-    eligibility: null,
+    eligibility: EMPTY_UNCLEAR_ELIGIBILITY,
     mechanismScore: null,
     mechanismRationale: null,
     literatureSupport: [],

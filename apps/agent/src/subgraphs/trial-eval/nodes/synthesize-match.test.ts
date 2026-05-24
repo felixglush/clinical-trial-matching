@@ -11,7 +11,7 @@ vi.mock("../../../llm.js", () => {
 });
 
 import { synthesizeMatch } from "./synthesize-match.js";
-import type { TrialEvalStateType } from "../state.js";
+import { EMPTY_UNCLEAR_ELIGIBILITY, type TrialEvalStateType } from "../state.js";
 import type {
   Citation,
   EligibilityAssessment,
@@ -182,6 +182,26 @@ describe("synthesizeMatch — fallback on LLM failure", () => {
     __invoke.mockRejectedValue(new Error("x"));
     const out = await synthesizeMatch(state({ eligibility: elig("ineligible") }));
     expect(out.matches![0]!.concerns.some((c) => /ineligible/i.test(c))).toBe(true);
+  });
+});
+
+describe("synthesizeMatch — eligibility default sentinel", () => {
+  // The TrialEvalState annotation defaults `eligibility` to
+  // EMPTY_UNCLEAR_ELIGIBILITY rather than null so synthesize-match can
+  // always emit a TrialMatch (whose `eligibility` field is non-nullable)
+  // without null-guarding. This test exercises the synthesize path with
+  // that exact sentinel — covers the case where eligibility-check never
+  // ran (parallel branch ordering) or wrote nothing.
+  it("propagates the unclear sentinel through to the TrialMatch and scores as unclear", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({ eligibility: EMPTY_UNCLEAR_ELIGIBILITY }),
+    );
+    expect(out.matches).toHaveLength(1);
+    expect(out.matches![0]!.eligibility).toEqual(EMPTY_UNCLEAR_ELIGIBILITY);
+    // unclear → mapEligibility=50, gate=passthrough
+    // 0.6*50 + 0.4*80 = 30 + 32 = 62
+    expect(out.matches![0]!.score).toBe(62);
   });
 });
 

@@ -11,7 +11,7 @@ vi.mock("../../../llm.js", () => {
 });
 
 import { mechanismPlausibility } from "./mechanism-plausibility.js";
-import type { TrialEvalStateType } from "../state.js";
+import { EMPTY_UNCLEAR_ELIGIBILITY, type TrialEvalStateType } from "../state.js";
 import type {
   Mechanism,
   RepurposingCandidate,
@@ -94,7 +94,7 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     candidate: trial(["strategy"]),
     mechanisms: [mech()],
     repurposingCandidates: [],
-    eligibility: null,
+    eligibility: EMPTY_UNCLEAR_ELIGIBILITY,
     mechanismScore: null,
     mechanismRationale: null,
     literatureSupport: [],

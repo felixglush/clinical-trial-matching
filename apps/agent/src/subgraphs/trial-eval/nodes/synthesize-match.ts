@@ -34,6 +34,7 @@
  */
 
 import type {
+  EligibilityAssessment,
   RepurposingCandidate,
   RepurposingRationale,
   TrialMatch,
@@ -57,7 +58,7 @@ export async function synthesizeMatch(
   state: TrialEvalStateType,
 ): Promise<Partial<TrialEvalStateType>> {
   const sub = computeSubScores(state);
-  const score = gateScore(state.eligibility?.overall, sub.total);
+  const score = gateScore(state.eligibility.overall, sub.total);
 
   const repurposingRationale = computeRepurposingRationale(
     state.candidate.repurposingDrugIds,
@@ -74,7 +75,7 @@ export async function synthesizeMatch(
       matchNarrationPrompt({
         profile: state.patientProfile,
         candidate: state.candidate,
-        eligibility: state.eligibility!,
+        eligibility: state.eligibility,
         mechanismScore: sub.mechanismScore,
         mechanismRationale: state.mechanismRationale ?? "Mechanism evaluation unavailable",
         sub: { ...sub, total: score },
@@ -126,7 +127,7 @@ export async function synthesizeMatch(
     ...state.candidate,
     score,
     summary,
-    eligibility: state.eligibility!,
+    eligibility: state.eligibility,
     mechanismScore: sub.mechanismScore,
     mechanismRationale: state.mechanismRationale ?? "Mechanism evaluation unavailable",
     literatureSupport: state.literatureSupport,
@@ -152,7 +153,7 @@ type SubScores = {
 };
 
 function computeSubScores(state: TrialEvalStateType): SubScores {
-  const eligibilityScore = mapEligibility(state.eligibility?.overall);
+  const eligibilityScore = mapEligibility(state.eligibility.overall);
   const mechanismScore = state.mechanismScore ?? 50;
   const total = Math.round(
     WEIGHT_ELIGIBILITY * eligibilityScore + WEIGHT_MECHANISM * mechanismScore,
@@ -160,7 +161,7 @@ function computeSubScores(state: TrialEvalStateType): SubScores {
   return { eligibilityScore, mechanismScore, total };
 }
 
-function mapEligibility(overall: string | undefined): number {
+function mapEligibility(overall: EligibilityAssessment["overall"]): number {
   switch (overall) {
     case "eligible":
       return 100;
@@ -172,12 +173,13 @@ function mapEligibility(overall: string | undefined): number {
       return 25;
     case "ineligible":
       return 0;
-    default:
-      return 50; // null state.eligibility → treat as unclear; defensive
   }
 }
 
-function gateScore(overall: string | undefined, weightedSum: number): number {
+function gateScore(
+  overall: EligibilityAssessment["overall"],
+  weightedSum: number,
+): number {
   if (overall === "ineligible") return 0;
   if (overall === "likely_ineligible") return Math.min(LIKELY_INELIGIBLE_CAP, weightedSum);
   return weightedSum;
@@ -211,20 +213,17 @@ function templatedSummary(
   score: number,
   sub: SubScores,
 ): string {
-  const overall = state.eligibility?.overall ?? "unclear";
   const citCount = state.literatureSupport.length;
-  return `${state.candidate.title}: eligibility=${overall}, mechanism=${sub.mechanismScore}/100, ${citCount} supporting citation(s); composite score ${score}.`;
+  return `${state.candidate.title}: eligibility=${state.eligibility.overall}, mechanism=${sub.mechanismScore}/100, ${citCount} supporting citation(s); composite score ${score}.`;
 }
 
 function deterministicConcerns(state: TrialEvalStateType): string[] {
   const concerns: string[] = [];
-  const overall = state.eligibility?.overall;
+  const { overall, safetyConcerns } = state.eligibility;
   if (overall === "ineligible") concerns.push("patient ineligible");
   if (overall === "likely_ineligible") concerns.push("patient likely ineligible");
-  if (state.eligibility?.safetyConcerns?.length) {
-    for (const s of state.eligibility.safetyConcerns) {
-      concerns.push(`${s.relation}: ${s.drugName} vs ${s.conditionName}`);
-    }
+  for (const s of safetyConcerns) {
+    concerns.push(`${s.relation}: ${s.drugName} vs ${s.conditionName}`);
   }
   if (state.mechanismScore == null) concerns.push("mechanism evaluation unavailable");
   if (state.literatureSupport.length === 0) concerns.push("no PubMed evidence found");

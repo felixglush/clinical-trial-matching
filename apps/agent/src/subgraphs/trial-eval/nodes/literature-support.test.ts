@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { literatureSupport } from "./literature-support.js";
-import type { TrialEvalStateType } from "../state.js";
+import { EMPTY_UNCLEAR_ELIGIBILITY, type TrialEvalStateType } from "../state.js";
 import type {
   Citation,
   Mechanism,
@@ -65,7 +65,7 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     candidate: trial(["metformin"]),
     mechanisms: [mech("type 2 diabetes", "glucose metabolism")],
     repurposingCandidates: [],
-    eligibility: null,
+    eligibility: EMPTY_UNCLEAR_ELIGIBILITY,
     mechanismScore: null,
     mechanismRationale: null,
     literatureSupport: [],

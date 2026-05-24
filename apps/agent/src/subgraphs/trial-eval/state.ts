@@ -10,6 +10,20 @@ import type {
   EligibilityAssessment,
 } from "@clinical-trial-matching/shared";
 
+// LangGraph annotations need a default value so parallel-fan-out branches
+// can read state before any node has written it. For `eligibility` we use
+// an "unclear" sentinel instead of `null` so downstream nodes (notably
+// synthesize-match, which must always emit a TrialMatch with a non-null
+// eligibility) can read it without null-guarding. eligibility-check
+// overwrites this default with a real assessment on every path (including
+// its LLM-failure fallback, which also resolves to overall="unclear").
+export const EMPTY_UNCLEAR_ELIGIBILITY: EligibilityAssessment = {
+  inclusion: [],
+  exclusion: [],
+  overall: "unclear",
+  safetyConcerns: [],
+};
+
 export const TrialEvalState = Annotation.Root({
   patientProfile: Annotation<PatientProfile>,
   candidate: Annotation<TrialCandidate>,
@@ -22,9 +36,9 @@ export const TrialEvalState = Annotation.Root({
     default: () => [],
   }),
 
-  eligibility: Annotation<EligibilityAssessment | null>({
+  eligibility: Annotation<EligibilityAssessment>({
     reducer: (_prev, next) => next,
-    default: () => null,
+    default: () => EMPTY_UNCLEAR_ELIGIBILITY,
   }),
   mechanismScore: Annotation<number | null>({
     reducer: (_prev, next) => next,
