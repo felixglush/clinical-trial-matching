@@ -7,10 +7,13 @@
  *
  *   - KG paths from `kg.pathBetween` (strategy-side: structural evidence
  *     of how the intervention connects to the patient's mechanism).
- *   - Tiered PubMed literature (supporting + counter-evidence).
+ *   - Tiered PubMed literature (supporting evidence only).
+ *   - Structured counter-evidence (PrimeKG contraindications, TxGNN
+ *     predContraindication, and prior terminated/withdrawn/suspended
+ *     CT.gov trials of this drug + condition).
  *   - TxGNN repurposing prediction (when the trial was surfaced through
- *     the repurposing channel): predicted indication/contraindication
- *     scores plus the explanation path TxGNN used.
+ *     the repurposing channel): predIndication score plus the explanation
+ *     path TxGNN used.
  *
  * Single-channel candidates get a subset of the above. The prompt always
  * states the discovery channel(s) so the LLM knows which signals are
@@ -117,7 +120,7 @@ export function mechanismScorePrompt(
     "    over a curated knowledge graph. Treat a high TxGNN score as",
     "    suggestive, not confirmatory: it raises the floor (a strong TxGNN",
     "    prediction with no literature still warrants ~50-65), but cannot",
-    "    overrule explicit counter-evidence in the literature.",
+    "    overrule the structured counter-evidence signals above.",
     "  - When TxGNN prediction and literature/KG agree, the score should be",
     "    higher than either signal alone would justify. When they disagree,",
     "    favor the literature and explain the disagreement in the rationale.",
@@ -262,6 +265,7 @@ function formatStructuredCounterEvidence(sce: StructuredCounterEvidence): string
         (c) => `    - ${c.drugName} (${c.drugId}) is annotated as contraindicated for ${c.conditionName} (${c.conditionId}).`,
       ),
     );
+    sections.push("");
   }
 
   if (sce.txGnnPredContraindication !== null) {
@@ -269,13 +273,14 @@ function formatStructuredCounterEvidence(sce: StructuredCounterEvidence): string
       "  TxGNN repurposing model:",
       `    predContraindication = ${sce.txGnnPredContraindication.toFixed(2)} (higher = TxGNN predicts this drug is contraindicated for the patient's disease; treat as a learned negative signal).`,
     );
+    sections.push("");
   }
 
   if (sce.terminatedPriorTrials.length > 0) {
     sections.push(
       "  Prior terminated / withdrawn / suspended trials of this drug + condition (CT.gov):",
       ...sce.terminatedPriorTrials.map((t) => {
-        const phaseStr = t.phase ? `phase ${t.phase.replace(/^PHASE/, "")}` : "phase unknown";
+        const phaseStr = t.phase ? `phase ${t.phase.replace(/^PHASE(\d)/, "$1")}` : "phase unknown";
         const dateStr = t.completionDate ? ` ${t.completionDate}` : "";
         const reason = t.whyStopped?.trim() || "(no whyStopped reason provided)";
         return `    - ${t.nctId} [${phaseStr}, ${t.status}${dateStr}]: "${reason}"`;
@@ -287,6 +292,7 @@ function formatStructuredCounterEvidence(sce: StructuredCounterEvidence): string
       "  sponsor business decision, regulatory changes, protocol amendments) are NOT",
       "  counter-evidence — note them and discount.",
     );
+    sections.push("");
   }
 
   if (sections.length === 0) return "  No structured counter-evidence retrieved.";

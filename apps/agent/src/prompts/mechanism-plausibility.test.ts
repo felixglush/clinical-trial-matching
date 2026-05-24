@@ -94,16 +94,6 @@ function tier3Citation(): Citation {
     abstractExcerpt: "(should NOT appear in prompt for Tier-3 since we hide abstracts)",
   };
 }
-function counterCitation(): Citation {
-  return {
-    pmid: "X1",
-    title: "Phase III trial discontinued for futility",
-    url: "u",
-    pubtype: ["Randomized Controlled Trial"],
-    abstractExcerpt: "Trial halted due to futility at interim analysis.",
-  };
-}
-
 function emptySce(): StructuredCounterEvidence {
   return {
     primeKgContraindications: [],
@@ -169,15 +159,15 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
     expect(out.indexOf("Tier-2")).toBeLessThan(out.indexOf("Tier-3"));
   });
 
-  it("shows abstracts for Tier-1 and Tier-2 but not Tier-3", () => {
+  it("shows abstracts for all tiers including Tier-3 (post-3c69fcd: formatTier always shows abstracts)", () => {
     const out = mechanismScorePrompt(
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation(), tier3Citation()],
       emptySce(),
       null,
     );
-    expect(out).toContain("RCT showed osimertinib");      // Tier-1 abstract shown
-    expect(out).not.toContain("should NOT appear");         // Tier-3 abstract hidden
+    expect(out).toContain("RCT showed osimertinib");                          // Tier-1 abstract shown
+    expect(out).toContain("should NOT appear in prompt for Tier-3 since we hide abstracts"); // Tier-3 abstract also shown
   });
 
   it("renders 'No structured counter-evidence retrieved' when SCE is empty", () => {
@@ -199,6 +189,33 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
     );
     expect(withCounter).toContain("NCT9999");
     expect(withCounter).toContain("Lack of efficacy at interim analysis.");
+  });
+
+  it("renders blank lines between multiple SCE subsections", () => {
+    const fullSce: StructuredCounterEvidence = {
+      primeKgContraindications: [
+        { drugId: "DB001", drugName: "DrugA", conditionId: "C001", conditionName: "CondA", relation: "contraindication" as const },
+      ],
+      txGnnPredContraindication: 0.85,
+      terminatedPriorTrials: [
+        {
+          nctId: "NCT01234567",
+          briefTitle: "Phase 3 trial",
+          status: "TERMINATED",
+          phase: "PHASE3",
+          whyStopped: "Lack of efficacy.",
+          completionDate: "2021-08",
+          conditions: ["CondA"],
+          interventions: ["DrugA"],
+        },
+      ],
+    };
+    const out = mechanismScorePrompt(
+      profile(), trial(), [mech()], [], [], fullSce, null,
+    );
+    // Each subsection header must be followed by a blank line before the next subsection
+    expect(out).toMatch(/PrimeKG contraindications:[\s\S]+?\n\n\s*TxGNN repurposing model:/);
+    expect(out).toMatch(/TxGNN repurposing model:[\s\S]+?\n\n\s*Prior terminated/);
   });
 
   it("instructs LLM to weight Tier-1 > Tier-2 > Tier-3 and address counter-evidence", () => {
