@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EligibilityAssessmentSchema } from "./eligibility";
+import { EligibilityAssessmentSchema, SafetyConcernSchema } from "./eligibility.js";
 import { CitationSchema } from "./pubmed";
 import { RepurposingRationaleSchema } from "./repurposing";
 
@@ -56,6 +56,35 @@ export const MechanismEvidenceItemSchema = z.object({
   supports: z.enum(["yes", "weak", "no"]),
 });
 export type MechanismEvidenceItem = z.infer<typeof MechanismEvidenceItemSchema>;
+
+// Mechanism-judging shape (NOT TrialCandidate — counter-evidence doesn't
+// carry discovery provenance or eligibility fields). One per prior trial
+// of the drug+condition retrieved from CT.gov with status TERMINATED,
+// WITHDRAWN, or SUSPENDED. `whyStopped` is raw markup as CT.gov returns
+// it; the LLM judges whether the reason is real biomedical
+// counter-evidence vs administrative noise.
+export const PriorTerminatedTrialSchema = z.object({
+  nctId: z.string(),
+  briefTitle: z.string(),
+  conditions: z.array(z.string()),
+  interventions: z.array(z.string()),
+  phase: z.string().optional(),
+  status: z.enum(["TERMINATED", "WITHDRAWN", "SUSPENDED"]),
+  whyStopped: z.string().optional(),
+  completionDate: z.string().optional(),
+});
+export type PriorTerminatedTrial = z.infer<typeof PriorTerminatedTrialSchema>;
+
+// Reuses SafetyConcernSchema from eligibility for primeKgContraindications:
+// the row shape (drugId, drugName, conditionId, conditionName, relation)
+// is exactly what `findContraindicationsForDrugs` already returns and what
+// `eligibility-check` already passes to its LLM. Same field, second consumer.
+export const StructuredCounterEvidenceSchema = z.object({
+  primeKgContraindications: z.array(SafetyConcernSchema),
+  txGnnPredContraindication: z.number().nullable(),
+  terminatedPriorTrials: z.array(PriorTerminatedTrialSchema),
+});
+export type StructuredCounterEvidence = z.infer<typeof StructuredCounterEvidenceSchema>;
 
 export const TrialMatchSchema = TrialCandidateSchema.extend({
   score: z.number().min(0).max(100),
