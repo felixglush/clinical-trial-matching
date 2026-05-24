@@ -8,6 +8,7 @@ import type {
   RepurposingCandidate,
   Citation,
   EligibilityAssessment,
+  StructuredCounterEvidence,
 } from "@clinical-trial-matching/shared";
 
 // LangGraph annotations need a default value so parallel-fan-out branches
@@ -55,6 +56,14 @@ export const TrialEvalState = Annotation.Root({
   counterEvidence: Annotation<Citation[]>({
     reducer: (_prev, next) => next,
     default: () => [],
+  }),
+  structuredCounterEvidence: Annotation<StructuredCounterEvidence>({
+    reducer: (_prev, next) => next,
+    default: () => ({
+      primeKgContraindications: [],
+      txGnnPredContraindication: null,
+      terminatedPriorTrials: [],
+    }),
   }),
   mechanismEvidence: Annotation<MechanismEvidenceItem[]>({
     reducer: (_prev, next) => next,

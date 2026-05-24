@@ -75,6 +75,11 @@ function state(): TrialEvalStateType {
     literatureSupport: [],
     evidenceAttempts: 0,
     counterEvidence: [],
+    structuredCounterEvidence: {
+      primeKgContraindications: [],
+      txGnnPredContraindication: null,
+      terminatedPriorTrials: [],
+    },
     mechanismEvidence: [],
     counterEvidenceAddressed: null,
     matches: [],

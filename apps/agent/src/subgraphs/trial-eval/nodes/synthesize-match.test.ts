@@ -69,6 +69,11 @@ function state(overrides: Partial<TrialEvalStateType> = {}): TrialEvalStateType 
     literatureSupport: [citation("1"), citation("2"), citation("3")],
     evidenceAttempts: 1,
     counterEvidence: [],
+    structuredCounterEvidence: {
+      primeKgContraindications: [],
+      txGnnPredContraindication: null,
+      terminatedPriorTrials: [],
+    },
     mechanismEvidence: [],
     counterEvidenceAddressed: null,
     matches: [],
