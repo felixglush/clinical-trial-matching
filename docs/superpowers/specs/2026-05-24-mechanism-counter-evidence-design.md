@@ -22,6 +22,9 @@ The fix is not to soften the prompt instruction (review item #5's surface remedy
 5. **Update** `prompts/mechanism-plausibility.ts`: replace the "Counter-evidence from PubMed" block with a "Counter-evidence (structured signals)" block containing labeled subsections. Delete the "include at least one `supports: 'no'`" instruction.
 6. **Update** `synthesize-match`'s "counter-evidence not addressed" concern to gate on `structuredCounterEvidence` having any non-empty source rather than `counterEvidence.length > 0`.
 7. **Extend** `tools/clinicaltrials.ts` with a sibling entry point `searchTerminatedPriorTrials({ intervention, condition })` that returns the new `PriorTerminatedTrial` shape (mechanism-judging fields only; not `TrialCandidate`).
+8. **Refresh docs** — [`README.md`](../../../README.md) and [`docs/topology.md`](../../topology.md) both describe the old subgraph layout and reference `counterEvidence` / the PubMed counter-query. Both must be updated as part of this work so the canonical references match the code. Specifically:
+   - README.md lines 44-60 (trial-eval-subgraph diagram) and line 80 (`literature-support` one-liner).
+   - docs/topology.md: trial-eval-subgraph diagram (lines 198-210), subgraph state table (lines 216-230, drop `counterEvidence`, add `structuredCounterEvidence`), the `literature-support` section (lines 246-262, drop counter-evidence query description), the `mechanism-plausibility` reads/prompt section (lines 273-301, replace `counterEvidence` references), the `synthesize-match` section (lines 303-346, PMID-echo filter and deterministic-concerns text), and a new section describing `gather-counter-evidence` slotted between `eligibility-check` and `literature-support`. Also update the "trial-eval evidence rigor" doc pointer in the "Where to look for what" table to mention this spec as the successor.
 
 ## Scope (out)
 
@@ -245,6 +248,8 @@ This is the suggested order for the implementation plan; the writing-plans skill
 7. Update `prompts/mechanism-plausibility.ts`: replace counter-block, remove forcing instruction, rephrase `counterEvidenceAddressed`, dedupe TxGNN rendering.
 8. Update `synthesize-match.ts`: change the concerns predicate.
 9. Spot-check CT.gov synonym coverage (Risks §1). If bad, add the two-query union.
+10. Refresh `README.md` trial-eval-subgraph diagram (lines 44-60) and `literature-support` one-liner (line 80).
+11. Refresh `docs/topology.md`: diagram, state table, `literature-support` section, `mechanism-plausibility` reads, `synthesize-match` PMID-echo and concerns text, new `gather-counter-evidence` section, "Where to look for what" pointer to this spec.
 
 ## Migration / rollout
 
