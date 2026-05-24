@@ -28,10 +28,12 @@ import { tierForCitation, tierLabel, type EvidenceTier } from "../util/pubmed-ti
 const GENES_PER_PROMPT = 6;
 const PATHWAYS_PER_PROMPT = 6;
 
-// No `.min`/`.max` on `evidence` — Bedrock structured-output route rejects
-// `maxItems`. Cap is enforced via the prompt body + post-LLM slice in the node.
+// Bedrock's tool-schema validator (reachable via OpenRouter routing) rejects
+// `minimum`/`maximum` on any numeric type, plus `maxItems` on arrays. Zod 4's
+// `.int()` *implicitly* injects safe-integer min/max into the emitted JSON
+// Schema, so we use plain `z.number()` and round + clamp in the node.
 export const MechanismPlausibilityJudgmentSchema = z.object({
-  score: z.number().int().min(0).max(100),
+  score: z.number(),
   rationale: z.string(),
   evidence: z.array(
     z.object({
@@ -95,7 +97,7 @@ export function mechanismScorePrompt(
     counterBlock,
     "",
     "Return:",
-    "  - score: 0-100. Weight Tier-1 strongly; Tier-2 moderately; Tier-3 lightly.",
+    "  - score: integer 0-100. Weight Tier-1 strongly; Tier-2 moderately; Tier-3 lightly.",
     "    KG-only support without literature: cap at ~55. Strong Tier-1 support:",
     "    can reach 100. Strong counter-evidence: significantly reduce score.",
     "  - rationale: 2-3 sentences combining KG path + literature into a",

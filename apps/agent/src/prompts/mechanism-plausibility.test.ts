@@ -184,10 +184,17 @@ describe("MechanismPlausibilityJudgmentSchema", () => {
     expect(parsed.score).toBe(85);
   });
 
-  it("rejects scores outside 0..100", () => {
-    expect(() =>
-      MechanismPlausibilityJudgmentSchema.parse({ score: 150, rationale: "x", evidence: [] }),
-    ).toThrow();
+  // Bedrock rejects `minimum`/`maximum` on integer types in tool schemas,
+  // so the schema deliberately accepts any integer. The 0-100 bound is
+  // enforced post-LLM by a clamp in `nodes/mechanism-plausibility.ts`
+  // (see Path B clamp tests there).
+  it("accepts integer scores outside 0..100 (clamping is the node's job)", () => {
+    const parsed = MechanismPlausibilityJudgmentSchema.parse({
+      score: 150,
+      rationale: "x",
+      evidence: [],
+    });
+    expect(parsed.score).toBe(150);
   });
 });
 

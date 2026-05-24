@@ -131,14 +131,19 @@ async function runPathB(
       ),
     );
     return {
-      mechanismScore: judgment.score,
+      mechanismScore: Math.max(0, Math.min(100, Math.round(judgment.score))),
       mechanismRationale: judgment.rationale,
       mechanismEvidence: judgment.evidence,
       counterEvidenceAddressed: judgment.counterEvidenceAddressed ?? null,
     };
   } catch (err) {
+    // Dump the full error object (not just .message) so structured-output
+    // parse failures surface their schema/HTTP cause for diagnosis. Pinning
+    // down the root cause of repeated Haiku failures on this schema requires
+    // err.cause, err.stack, and any langchain-attached llmOutput.
     console.warn(
       `mechanism-plausibility (Path B): LLM failed for ${state.candidate.nctId}: ${errorMessage(err)} (null score)`,
+      err,
     );
     return {
       mechanismScore: null,

@@ -285,3 +285,48 @@ describe("mechanismPlausibility — Path B literature integration (v1.5)", () =>
     expect(__invoke).not.toHaveBeenCalled(); // still LLM-free
   });
 });
+
+// Bedrock's tool-schema validator rejects `minimum`/`maximum` on integer
+// types, so we removed those Zod constraints to keep the OpenRouter →
+// Bedrock route working. The 0-100 bound is now enforced post-LLM via a
+// clamp in the node.
+describe("mechanismPlausibility — Path B score clamping", () => {
+  it("clamps an out-of-range high score to 100", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB",
+      name: "drug",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 105, rationale: "off-by-five", evidence: [] });
+    const out = await mechanismPlausibility(state({ candidate: trial(["strategy"]) }));
+    expect(out.mechanismScore).toBe(100);
+  });
+
+  it("clamps a negative score to 0", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB",
+      name: "drug",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: -5, rationale: "underflow", evidence: [] });
+    const out = await mechanismPlausibility(state({ candidate: trial(["strategy"]) }));
+    expect(out.mechanismScore).toBe(0);
+  });
+
+  // The schema is `z.number()` (no `.int()`) because zod 4's `.int()` injects
+  // safe-integer min/max into the JSON Schema, which Bedrock rejects. So the
+  // node must round floats to integer before clamping.
+  it("rounds a non-integer score to the nearest integer", async () => {
+    vi.spyOn(kg, "pathBetween").mockResolvedValue([]);
+    vi.spyOn(kg, "resolveDrugByName").mockResolvedValue({
+      id: "DB",
+      name: "drug",
+      type: "drug",
+    });
+    __invoke.mockResolvedValue({ score: 75.6, rationale: "float", evidence: [] });
+    const out = await mechanismPlausibility(state({ candidate: trial(["strategy"]) }));
+    expect(out.mechanismScore).toBe(76);
+  });
+});
