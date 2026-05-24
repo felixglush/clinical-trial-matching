@@ -285,6 +285,63 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     );
   });
 
+  it("flags 'counter-evidence present but unaddressed' when primeKgContraindications is non-empty", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        structuredCounterEvidence: {
+          primeKgContraindications: [{
+            drugId: "DB001",
+            drugName: "TestDrug",
+            conditionId: "MONDO:0001",
+            conditionName: "TestCondition",
+            relation: "contraindication",
+          }],
+          txGnnPredContraindication: null,
+          terminatedPriorTrials: [],
+        },
+        counterEvidenceAddressed: null,
+      }),
+    );
+    expect(out.matches![0]!.concerns).toContain(
+      "counter-evidence present but not addressed in mechanism judgment",
+    );
+  });
+
+  it("does NOT flag 'counter-evidence present but unaddressed' when txGnnPredContraindication is 0", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: 0,
+          terminatedPriorTrials: [],
+        },
+        counterEvidenceAddressed: null,
+      }),
+    );
+    expect(out.matches![0]!.concerns).not.toContain(
+      "counter-evidence present but not addressed in mechanism judgment",
+    );
+  });
+
+  it("flags 'counter-evidence present but unaddressed' when txGnnPredContraindication > 0", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        structuredCounterEvidence: {
+          primeKgContraindications: [],
+          txGnnPredContraindication: 0.5,
+          terminatedPriorTrials: [],
+        },
+        counterEvidenceAddressed: null,
+      }),
+    );
+    expect(out.matches![0]!.concerns).toContain(
+      "counter-evidence present but not addressed in mechanism judgment",
+    );
+  });
+
   it("propagates counterEvidenceAddressed onto the TrialMatch", async () => {
     __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
     const out = await synthesizeMatch(

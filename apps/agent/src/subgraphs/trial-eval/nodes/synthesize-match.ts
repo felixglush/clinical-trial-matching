@@ -128,7 +128,7 @@ export async function synthesizeMatch(
   const sce = state.structuredCounterEvidence;
   const hasStructuredCounterEvidence =
     sce.primeKgContraindications.length > 0 ||
-    sce.txGnnPredContraindication !== null ||
+    (sce.txGnnPredContraindication !== null && sce.txGnnPredContraindication > 0) ||
     sce.terminatedPriorTrials.length > 0;
   if (hasStructuredCounterEvidence && !state.counterEvidenceAddressed) {
     concerns.push("counter-evidence present but not addressed in mechanism judgment");
