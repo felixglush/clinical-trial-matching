@@ -263,4 +263,40 @@ describe("synthesizeMatch — mechanismEvidence and counterEvidenceAddressed", (
     );
     expect(out.matches![0]!.counterEvidenceAddressed).toBe("Population differs.");
   });
+
+  // Path A (repurposing channel) never calls the mechanism-plausibility LLM,
+  // so it cannot populate `mechanismEvidence` or `counterEvidenceAddressed`.
+  // The two Path B-shaped concerns ("counter-evidence present but not
+  // addressed", "no literature-cited evidence for mechanism") must be gated
+  // on Path B; otherwise every Path A match gets them spuriously.
+  it("does NOT flag 'counter-evidence unaddressed' concern for Path A (repurposing) candidates", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        candidate: trial({ discoveredVia: ["repurposing"], repurposingDrugIds: ["DB1"] }),
+        counterEvidence: [
+          { pmid: "X1", title: "t", url: "https://pubmed.ncbi.nlm.nih.gov/X1/", pubtype: [] },
+        ],
+        counterEvidenceAddressed: null,
+      }),
+    );
+    expect(out.matches![0]!.concerns).not.toContain(
+      "counter-evidence present but not addressed in mechanism judgment",
+    );
+  });
+
+  it("does NOT flag 'no literature-cited evidence' concern for Path A (repurposing) candidates", async () => {
+    __invoke.mockResolvedValue({ summary: "ok", concerns: [] });
+    const out = await synthesizeMatch(
+      state({
+        candidate: trial({ discoveredVia: ["repurposing"], repurposingDrugIds: ["DB1"] }),
+        mechanismScore: 92, // Path A always sets a score from TxGNN
+        mechanismEvidence: [], // Path A never populates this
+        literatureSupport: [citation("1")],
+      }),
+    );
+    expect(out.matches![0]!.concerns).not.toContain(
+      "no literature-cited evidence for mechanism",
+    );
+  });
 });

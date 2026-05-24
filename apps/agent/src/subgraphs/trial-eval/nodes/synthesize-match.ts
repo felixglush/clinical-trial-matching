@@ -105,17 +105,22 @@ export async function synthesizeMatch(
     return ok;
   });
 
-  // Concern: counter-evidence retrieved but mechanism judgment did not
-  // address it. Indicates the Path B judge either skipped reading the
-  // negative-results pile or returned a null `counterEvidenceAddressed`.
-  if (state.counterEvidence.length > 0 && !state.counterEvidenceAddressed) {
-    concerns.push("counter-evidence present but not addressed in mechanism judgment");
-  }
-  // Concern: mechanism was scored but no literature-cited evidence
-  // survived the PMID-echo filter — the score rests on the LLM's prior,
-  // not on the retrieved corpus.
-  if (filteredEvidence.length === 0 && state.mechanismScore !== null) {
-    concerns.push("no literature-cited evidence for mechanism");
+  // Both concerns below are Path B-only: Path A (repurposing channel)
+  // never invokes the mechanism judge, so `mechanismEvidence` and
+  // `counterEvidenceAddressed` are structurally empty/null for it.
+  if (!discoveredViaRepurposing) {
+    // Counter-evidence retrieved but mechanism judgment did not address it —
+    // judge either skipped the negative-results pile or returned a null
+    // `counterEvidenceAddressed`.
+    if (state.counterEvidence.length > 0 && !state.counterEvidenceAddressed) {
+      concerns.push("counter-evidence present but not addressed in mechanism judgment");
+    }
+    // Mechanism scored but no literature-cited evidence survived the
+    // PMID-echo filter — the score rests on the LLM's prior, not on the
+    // retrieved corpus.
+    if (filteredEvidence.length === 0 && state.mechanismScore !== null) {
+      concerns.push("no literature-cited evidence for mechanism");
+    }
   }
 
   const match: TrialMatch = {
