@@ -252,4 +252,16 @@ PMID: 87654321
     const url = new URL(fetchSpy.mock.calls[0]![0] as string);
     expect(url.searchParams.get("api_key")).toBe("test-key");
   });
+
+  it("passes an AbortSignal to fetch (per-attempt timeout)", async () => {
+    const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValueOnce(
+      new Response(efetchFixture, {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    await fetchAbstracts(["39603809"]);
+    const init = fetchSpy.mock.calls[0]![1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
 });

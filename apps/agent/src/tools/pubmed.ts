@@ -29,6 +29,7 @@ const EFETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi";
 const PUBMED_BASE = "https://pubmed.ncbi.nlm.nih.gov";
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUSES = new Set([429, 503]);
 const ABSTRACT_MAX_CHARS = 500;
 
@@ -177,7 +178,10 @@ function appendApiKey(url: string): string {
 async function fetchWithRetry(url: string): Promise<Response> {
   let lastRes: Response | null = null;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(url);
+    // Per-attempt timeout: a hung connection on one attempt shouldn't
+    // exhaust the budget for the next. Throws AbortError on expiry,
+    // which propagates out (we don't retry network-level failures).
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!RETRYABLE_STATUSES.has(res.status)) return res;
     lastRes = res;
     if (attempt === MAX_RETRIES - 1) break;

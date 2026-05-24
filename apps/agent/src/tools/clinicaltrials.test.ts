@@ -153,4 +153,11 @@ describe("searchClinicalTrials", () => {
     const out = await promise;
     expect(out).toHaveLength(1);
   });
+
+  it("passes an AbortSignal to fetch (per-attempt timeout)", async () => {
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue(makeResponse({ studies: [] }));
+    await searchClinicalTrials({ term: "x" });
+    const init = spy.mock.calls[0]![1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
 });
