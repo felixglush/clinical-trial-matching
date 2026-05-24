@@ -25,6 +25,7 @@ import type {
   Mechanism,
   PatientProfile,
   RepurposingCandidate,
+  StructuredCounterEvidence,
   TrialCandidate,
 } from "@clinical-trial-matching/shared";
 
@@ -61,7 +62,7 @@ export function mechanismScorePrompt(
   mechanisms: Mechanism[],
   kgPaths: KGPath[],
   supporting: Citation[],
-  counter: Citation[],
+  structuredCounterEvidence: StructuredCounterEvidence,
   repurposingContext: RepurposingCandidate | null,
 ): string {
   const grouped = groupByTier(supporting);
@@ -76,10 +77,7 @@ export function mechanismScorePrompt(
     formatTier(grouped[3]),
   ].join("\n");
 
-  const counterBlock =
-    counter.length > 0
-      ? counter.map((c) => formatCitation(c)).join("\n\n")
-      : "  No counter-evidence retrieved.";
+  const counterBlock = formatStructuredCounterEvidence(structuredCounterEvidence);
 
   return [
     "You are scoring the biological plausibility of a clinical trial's",
@@ -108,7 +106,7 @@ export function mechanismScorePrompt(
     "  Tier-3: case reports, editorials, comments, letters, news, personal narratives.",
     literatureBlock,
     "",
-    "Counter-evidence from PubMed (papers describing failure / futility / toxicity / withdrawal):",
+    "Counter-evidence (structured signals):",
     counterBlock,
     "",
     "How to weight signals:",
@@ -124,7 +122,9 @@ export function mechanismScorePrompt(
     "    higher than either signal alone would justify. When they disagree,",
     "    favor the literature and explain the disagreement in the rationale.",
     "  - Strong counter-evidence significantly reduces the score regardless",
-    "    of other signals.",
+    "    of other signals. An on-point PrimeKG contraindication or a phase-3",
+    "    trial terminated for lack of efficacy against the same condition is",
+    "    very strong counter-evidence.",
     "",
     "Return:",
     "  - score: integer 0-100.",
@@ -136,10 +136,12 @@ export function mechanismScorePrompt(
     "      - pmid: a PMID actually present above (do NOT invent)",
     "      - quote: short verbatim excerpt from that paper's abstract (≤200 chars)",
     "      - supports: 'yes' / 'weak' / 'no'",
-    "    Include at least one counter-evidence quote (supports: 'no') if any",
-    "    counter-evidence is present.",
-    "  - counterEvidenceAddressed: if counter-evidence is present, one sentence",
-    "    on whether/how it changes the score. Omit if no counter-evidence.",
+    "  - counterEvidenceAddressed: if any structured counter-evidence was present",
+    "    and on-point (a real biomedical contraindication, a high TxGNN",
+    "    predContraindication, or a prior trial terminated for a real biomedical",
+    "    reason like lack of efficacy or toxicity), one sentence on whether/how",
+    "    it affects the score. Omit if none was present or all retrieved signals",
+    "    were administrative noise (low enrollment, funding, sponsor decision).",
   ].join("\n");
 }
 
@@ -151,14 +153,12 @@ function discoveryChannelBlock(
   const lines = [`Discovery channel(s): ${channels}`];
   if (repurposing) {
     const indication = (repurposing.predIndication ?? 0).toFixed(2);
-    const contra = (repurposing.predContraindication ?? 0).toFixed(2);
     const original = repurposing.originalIndications.join(", ") || "(unknown)";
     lines.push(
       `  TxGNN repurposing prediction (source: TxGNN drug-disease model over PrimeKG):`,
       `    drug: ${repurposing.drug.name} (${repurposing.drug.id})`,
       `    originally indicated for: ${original}`,
       `    predIndication: ${indication}   (higher = TxGNN predicts this drug treats the patient's disease)`,
-      `    predContraindication: ${contra}   (higher = TxGNN predicts this drug is contraindicated; treat as a negative signal)`,
     );
     if (repurposing.supportingPaths.length > 0) {
       lines.push(
@@ -250,4 +250,45 @@ function formatPath(p: KGPath): string {
     if (edge) segments.push(`-[${edge.relation}]-`);
   }
   return "  " + segments.join(" ");
+}
+
+function formatStructuredCounterEvidence(sce: StructuredCounterEvidence): string {
+  const sections: string[] = [];
+
+  if (sce.primeKgContraindications.length > 0) {
+    sections.push(
+      "  PrimeKG contraindications:",
+      ...sce.primeKgContraindications.map(
+        (c) => `    - ${c.drugName} (${c.drugId}) is annotated as contraindicated for ${c.conditionName} (${c.conditionId}).`,
+      ),
+    );
+  }
+
+  if (sce.txGnnPredContraindication !== null) {
+    sections.push(
+      "  TxGNN repurposing model:",
+      `    predContraindication = ${sce.txGnnPredContraindication.toFixed(2)} (higher = TxGNN predicts this drug is contraindicated for the patient's disease; treat as a learned negative signal).`,
+    );
+  }
+
+  if (sce.terminatedPriorTrials.length > 0) {
+    sections.push(
+      "  Prior terminated / withdrawn / suspended trials of this drug + condition (CT.gov):",
+      ...sce.terminatedPriorTrials.map((t) => {
+        const phaseStr = t.phase ? `phase ${t.phase.replace(/^PHASE/, "")}` : "phase unknown";
+        const dateStr = t.completionDate ? ` ${t.completionDate}` : "";
+        const reason = t.whyStopped?.trim() || "(no whyStopped reason provided)";
+        return `    - ${t.nctId} [${phaseStr}, ${t.status}${dateStr}]: "${reason}"`;
+      }),
+      "",
+      "  Judge each whyStopped on its merits. Real biomedical reasons (lack of efficacy,",
+      "  futility, safety, toxicity, adverse events, dose-limiting toxicity) are",
+      "  counter-evidence. Administrative reasons (low enrollment, funding withdrawn,",
+      "  sponsor business decision, regulatory changes, protocol amendments) are NOT",
+      "  counter-evidence — note them and discount.",
+    );
+  }
+
+  if (sections.length === 0) return "  No structured counter-evidence retrieved.";
+  return sections.join("\n");
 }

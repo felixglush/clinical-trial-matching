@@ -9,6 +9,7 @@ import type {
   KGPath,
   Mechanism,
   PatientProfile,
+  StructuredCounterEvidence,
   TrialCandidate,
 } from "@clinical-trial-matching/shared";
 
@@ -103,16 +104,43 @@ function counterCitation(): Citation {
   };
 }
 
+function emptySce(): StructuredCounterEvidence {
+  return {
+    primeKgContraindications: [],
+    txGnnPredContraindication: null,
+    terminatedPriorTrials: [],
+  };
+}
+
+function scWithTerminatedTrial(): StructuredCounterEvidence {
+  return {
+    primeKgContraindications: [],
+    txGnnPredContraindication: null,
+    terminatedPriorTrials: [
+      {
+        nctId: "NCT9999",
+        briefTitle: "Phase III osimertinib in NSCLC",
+        status: "TERMINATED",
+        phase: "PHASE3",
+        whyStopped: "Lack of efficacy at interim analysis.",
+        completionDate: "2022-06",
+        conditions: ["Non-small cell lung carcinoma"],
+        interventions: ["Osimertinib"],
+      },
+    ],
+  };
+}
+
 describe("mechanismScorePrompt (Path B)", () => {
   it("includes trial interventions and patient mechanisms", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], [], null);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], emptySce(), null);
     expect(out).toContain("Osimertinib");
     expect(out).toContain("EGFR");
     expect(out).toContain("ERBB signaling pathway");
   });
 
   it("includes KG paths in a clearly labeled block", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], [], null);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], emptySce(), null);
     expect(out).toContain("KG path");
     expect(out).toContain("DB09330");
     expect(out).toContain("target");
@@ -120,7 +148,7 @@ describe("mechanismScorePrompt (Path B)", () => {
   });
 
   it("calls out the no-path case explicitly", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], [], null);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], emptySce(), null);
     expect(out).toMatch(/no kg path/i);
   });
 });
@@ -130,7 +158,7 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
     const out = mechanismScorePrompt(
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation(), tier2Citation(), tier3Citation()],
-      [],
+      emptySce(),
       null,
     );
     expect(out).toContain("Tier-1");
@@ -145,34 +173,36 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
     const out = mechanismScorePrompt(
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation(), tier3Citation()],
-      [],
+      emptySce(),
       null,
     );
     expect(out).toContain("RCT showed osimertinib");      // Tier-1 abstract shown
     expect(out).not.toContain("should NOT appear");         // Tier-3 abstract hidden
   });
 
-  it("conditionally renders the counter-evidence block only when non-empty", () => {
+  it("renders 'No structured counter-evidence retrieved' when SCE is empty", () => {
     const without = mechanismScorePrompt(
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation()],
-      [],
+      emptySce(),
       null,
     );
-    expect(without).toContain("No counter-evidence retrieved");
+    expect(without).toContain("No structured counter-evidence retrieved");
+  });
 
+  it("renders terminated trial entry when SCE has a terminated trial", () => {
     const withCounter = mechanismScorePrompt(
       profile(), trial(), [mech()], [kgPath()],
       [tier1Citation()],
-      [counterCitation()],
+      scWithTerminatedTrial(),
       null,
     );
-    expect(withCounter).toContain("halted due to futility");
-    expect(withCounter).toContain("X1");
+    expect(withCounter).toContain("NCT9999");
+    expect(withCounter).toContain("Lack of efficacy at interim analysis.");
   });
 
   it("instructs LLM to weight Tier-1 > Tier-2 > Tier-3 and address counter-evidence", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], [], null);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], emptySce(), null);
     expect(out).toMatch(/Tier-1.*Tier-2.*Tier-3/s);
     expect(out).toMatch(/counterEvidenceAddressed/);
   });
@@ -203,28 +233,29 @@ describe("mechanismScorePrompt — discovery-channel provenance block", () => {
   }
 
   it("strategy-only candidate: announces strategy channel + explicit 'no TxGNN prediction'", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], [], null);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], emptySce(), null);
     expect(out).toMatch(/Discovery channel\(s\): strategy/);
     expect(out).toMatch(/no TxGNN repurposing prediction is associated/);
   });
 
-  it("repurposing candidate with TxGNN context: includes drug, scores, original indications, explanation path", () => {
+  it("repurposing candidate with TxGNN context: includes drug, predIndication, original indications, explanation path", () => {
     const repurposingTrial: TrialCandidate = {
       ...trial(),
       discoveredVia: ["repurposing"],
       repurposingDrugIds: ["DB09330"],
     };
     const out = mechanismScorePrompt(
-      profile(), repurposingTrial, [mech()], [], [], [], repurposingCandidate(),
+      profile(), repurposingTrial, [mech()], [], [], emptySce(), repurposingCandidate(),
     );
     expect(out).toMatch(/Discovery channel\(s\): repurposing/);
     expect(out).toMatch(/TxGNN repurposing prediction/);
     expect(out).toContain("osimertinib");
     expect(out).toContain("DB09330");
     expect(out).toContain("0.92"); // predIndication
-    expect(out).toContain("0.05"); // predContraindication
     expect(out).toContain("non-small cell lung carcinoma");
     expect(out).toContain("EGFR"); // from explanation path
+    // predContraindication is now surfaced only via the structured counter-evidence block
+    expect(out).not.toContain("predContraindication: 0.05");
   });
 
   it("dual-channel candidate: prompt lists both channels", () => {
@@ -234,7 +265,7 @@ describe("mechanismScorePrompt — discovery-channel provenance block", () => {
       repurposingDrugIds: ["DB09330"],
     };
     const out = mechanismScorePrompt(
-      profile(), dualTrial, [mech()], [], [], [], repurposingCandidate(),
+      profile(), dualTrial, [mech()], [], [], emptySce(), repurposingCandidate(),
     );
     expect(out).toMatch(/Discovery channel\(s\): strategy \+ repurposing/);
     expect(out).toMatch(/TxGNN repurposing prediction/);
@@ -247,14 +278,14 @@ describe("mechanismScorePrompt — discovery-channel provenance block", () => {
       repurposingDrugIds: ["DB09330"],
     };
     const out = mechanismScorePrompt(
-      profile(), repurposingTrial, [mech()], [], [], [], null,
+      profile(), repurposingTrial, [mech()], [], [], emptySce(), null,
     );
     expect(out).toMatch(/no matching TxGNN prediction record/i);
     expect(out).not.toMatch(/predIndication/);
   });
 
   it("instructions section tells the LLM how to weigh TxGNN vs literature when they disagree", () => {
-    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], [], null);
+    const out = mechanismScorePrompt(profile(), trial(), [mech()], [], [], emptySce(), null);
     expect(out).toMatch(/TxGNN/);
     expect(out).toMatch(/disagree/i);
     expect(out).toMatch(/favor the literature/i);
