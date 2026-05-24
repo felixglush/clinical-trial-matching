@@ -67,18 +67,18 @@ export function mechanismScorePrompt(
   const grouped = groupByTier(supporting);
   const literatureBlock = [
     `${tierLabel(1)}:`,
-    formatTier(grouped[1], { showAbstract: true }),
+    formatTier(grouped[1]),
     "",
     `${tierLabel(2)}:`,
-    formatTier(grouped[2], { showAbstract: true }),
+    formatTier(grouped[2]),
     "",
     `${tierLabel(3)}:`,
-    formatTier(grouped[3], { showAbstract: false }),
+    formatTier(grouped[3]),
   ].join("\n");
 
   const counterBlock =
     counter.length > 0
-      ? counter.map((c) => formatCitation(c, { showAbstract: true })).join("\n\n")
+      ? counter.map((c) => formatCitation(c)).join("\n\n")
       : "  No counter-evidence retrieved.";
 
   return [
@@ -103,6 +103,9 @@ export function mechanismScorePrompt(
     kgPaths.length > 0 ? kgPaths.map(formatPath).join("\n\n") : "",
     "",
     "Supporting literature from PubMed (grouped by evidence tier):",
+    "  Tier-1: randomized controlled trials, meta-analyses, systematic reviews.",
+    "  Tier-2: other clinical studies and reviews (default bucket).",
+    "  Tier-3: case reports, editorials, comments, letters, news, personal narratives.",
     literatureBlock,
     "",
     "Counter-evidence from PubMed (papers describing failure / futility / toxicity / withdrawal):",
@@ -195,20 +198,17 @@ function groupByTier(cits: Citation[]): Record<EvidenceTier, Citation[]> {
   return out;
 }
 
-function formatTier(cits: Citation[], opts: { showAbstract: boolean }): string {
+function formatTier(cits: Citation[]): string {
   if (cits.length === 0) return "  (none)";
-  return cits.map((c) => formatCitation(c, opts)).join("\n\n");
+  return cits.map((c) => formatCitation(c)).join("\n\n");
 }
 
-function formatCitation(c: Citation, opts: { showAbstract: boolean }): string {
-  const lines = [
+function formatCitation(c: Citation): string {
+  return [
     `  [${c.pmid}] ${c.title}`,
     `  Pubtype: ${c.pubtype.join(", ") || "(none)"}`,
-  ];
-  if (opts.showAbstract) {
-    lines.push(`  Abstract excerpt: ${c.abstractExcerpt ?? "(unavailable)"}`);
-  }
-  return lines.join("\n");
+    `  Abstract excerpt: ${c.abstractExcerpt ?? "(unavailable)"}`,
+  ].join("\n");
 }
 
 function patientLine(p: PatientProfile): string {
