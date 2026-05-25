@@ -227,6 +227,13 @@ Three touch points (`state.counterEvidence` is currently read from at lines 100 
 
    For each, query `query.intr=<canonical>` and check that trials registered under the synonyms appear. If coverage is bad (say, <70% recall on the spot-checks), fall back to a "two-query union": run a second query with `query.intr=<PrimeKG canonical name>` if `resolveDrugByName` succeeded and the canonical differs from the trial's raw intervention string.
 
+   **Spot-check result (2026-05-24):** CT.gov's `query.intr` indexing bridges canonical / brand / research-code names reliably. Live counts against the `filter.overallStatus=TERMINATED|WITHDRAWN|SUSPENDED` slice:
+   - `osimertinib` = `AZD9291` = `Tagrisso` = **24** (identical)
+   - `trastuzumab` = 210, `Herceptin` = 212 (~99% match), `Kanjinti` = 7 (biosimilar — correctly counted as a distinct drug, not bridged)
+   - `pembrolizumab` = `MK-3475` = `Keytruda` = **493** (identical)
+
+   Conclusion: no two-query union needed for v1. The biosimilar case (Kanjinti vs Herceptin) is correct CT.gov behavior — a biosimilar is biologically a different entity, so counter-evidence against the originator isn't necessarily counter-evidence against the biosimilar. If this becomes a problem later (e.g. biosimilar trials surfaced via repurposing channel where we'd want the originator's terminated-trial signal), revisit with an explicit biosimilar-aware crosswalk.
+
 2. **CT.gov query budget.** Worst case: 3 interventions per candidate × ~50 candidates per patient = ~150 CT.gov queries per patient run. Respect the existing 14-in-flight concurrency cap at the search-trials node level. If the cap isn't enforced on the new function, add it. Confirm with the implementer.
 
 3. **Silent KG-outage bypass.** A Neo4j outage in `gather-counter-evidence`'s PrimeKG fetch returns `[]`, indistinguishable from "no contraindications found". This is the same issue as review item #7 for `eligibility-check`. Add a `lookupOk: { primeKg: boolean; ctgov: boolean }` sub-object to `structuredCounterEvidence`, surface it to the LLM in the prompt ("PrimeKG contraindication lookup: BYPASSED (KG unavailable)"), and let the judge model factor it in. Bundle with the #7 fix if doing both.
