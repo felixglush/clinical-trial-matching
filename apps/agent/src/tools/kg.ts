@@ -11,6 +11,7 @@ import type {
   KGNode,
   KGPath,
   Mechanism,
+  SafetyConcern,
 } from "@clinical-trial-matching/shared";
 
 import { resolveSnomedCondition, type ResolvedDisease } from "./snomed-mondo.js";
@@ -236,3 +237,187 @@ function buildSupportingPaths(
 }
 
 export { normalizeNodeType };
+
+// ---------- pathBetween ----------
+//
+// Variable-hop sample paths between two PrimeKG nodes. PrimeKG edges are
+// undirected (per docs/primekg-querying.md); the `*1..N` syntax matches both
+// directions. Paths are returned shortest-first (`ORDER BY length(p)`) so
+// the most direct connection surfaces before longer, hub-hopping walks.
+//
+// `relTypes` is a required whitelist of relationship types — without it the
+// query traverses noise edges like `parent-child` (disease taxonomy) and
+// `contraindication` (which a mechanism scorer must never see framed as
+// "mechanism evidence"). Callers pass the relationship set that matches
+// their domain (e.g. drug→disease mechanism: target/enzyme/ppi/...).
+//
+// Cypher requires literal integers in the variable-length range `*A..B`;
+// parameter binding (`*1..$maxHops`) is rejected at parse time. We validate
+// the bound and interpolate it as a literal. `pathLimit` stays a parameter.
+// `neo4j.int(...)` is required for the LIMIT param: the driver maps raw
+// JS numbers to FLOAT and Cypher LIMIT rejects FLOAT.
+
+const MAX_HOPS_CEILING = 5;
+
+export async function pathBetween(
+  fromId: string,
+  toId: string,
+  relTypes: readonly string[],
+  maxHops = 3,
+  pathLimit = 5,
+): Promise<KGPath[]> {
+  if (!Number.isInteger(maxHops) || maxHops < 1 || maxHops > MAX_HOPS_CEILING) {
+    throw new Error(`pathBetween: maxHops must be an integer in [1, ${MAX_HOPS_CEILING}], got ${maxHops}`);
+  }
+  if (relTypes.length === 0) {
+    throw new Error("pathBetween: relTypes must be a non-empty whitelist of relationship types");
+  }
+  const cypher = `
+MATCH p = (a:Node {id: $fromId})-[r*1..${maxHops}]-(b:Node {id: $toId})
+WHERE ALL(rel IN r WHERE type(rel) IN $relTypes)
+RETURN p
+ORDER BY length(p)
+LIMIT $pathLimit
+`;
+  const session = openSession();
+  try {
+    const result = await session.run(cypher, {
+      fromId,
+      toId,
+      relTypes: [...relTypes],
+      pathLimit: neo4j.int(pathLimit),
+    });
+    return result.records.map((r) => pathFromDriverPath(r.get("p")));
+  } finally {
+    await session.close();
+  }
+}
+
+// neo4j-driver's Path object exposes `segments[]`; each segment carries
+// {start, relationship, end}. We flatten to {nodes[], edges[]} for the
+// shared KGPath shape; types normalize via NODE_TYPE_FROM_KG.
+type DriverNode = { properties: { id: string; name: string; type: string } };
+type DriverRel = { type: string };
+type DriverSegment = { start: DriverNode; relationship: DriverRel; end: DriverNode };
+type DriverPath = { segments: DriverSegment[] };
+
+function pathFromDriverPath(p: DriverPath): KGPath {
+  const nodes: KGNode[] = [];
+  const edges: KGEdge[] = [];
+  if (p.segments.length === 0) return { nodes, edges };
+  nodes.push(driverNodeToKGNode(p.segments[0]!.start));
+  for (const seg of p.segments) {
+    nodes.push(driverNodeToKGNode(seg.end));
+    edges.push({
+      source: seg.start.properties.id,
+      target: seg.end.properties.id,
+      relation: seg.relationship.type,
+    });
+  }
+  return { nodes, edges };
+}
+
+function driverNodeToKGNode(n: DriverNode): KGNode {
+  return {
+    id: n.properties.id,
+    name: n.properties.name,
+    type: normalizeNodeType(n.properties.type),
+  };
+}
+
+// ---------- findContraindicationsForDrugs ----------
+//
+// Deterministic safety lookup for `eligibility-check`'s step 1. Returns
+// rows for every (drug, disease) pair in the input that has a
+// `contraindication` edge in PrimeKG. `DISTINCT` because the undirected
+// match yields duplicate rows.
+//
+// `side_effect` is NOT in this query: the subset built by
+// `pnpm kg:build-subset` drops side-effect nodes/edges. The single-element
+// enum on `SafetyConcern.relation` documents this; the spec corrects the
+// drug-eval v2 reference to `side_effect`.
+
+const CYPHER_CONTRAINDICATIONS = `
+MATCH (d:Node {type: 'drug'})-[:\`contraindication\`]-(c:Node {type: 'disease'})
+WHERE d.id IN $drugIds AND c.id IN $diseaseIds
+RETURN DISTINCT d.id AS drugId, d.name AS drugName,
+                c.id AS conditionId, c.name AS conditionName
+` as const;
+
+export async function findContraindicationsForDrugs(
+  drugIds: string[],
+  diseaseIds: string[],
+): Promise<SafetyConcern[]> {
+  if (drugIds.length === 0 || diseaseIds.length === 0) return [];
+  const session = openSession();
+  try {
+    const result = await session.run(CYPHER_CONTRAINDICATIONS, {
+      drugIds,
+      diseaseIds,
+    });
+    return result.records.map((r) => ({
+      drugId: r.get("drugId") as string,
+      drugName: r.get("drugName") as string,
+      conditionId: r.get("conditionId") as string,
+      conditionName: r.get("conditionName") as string,
+      relation: "contraindication" as const,
+    }));
+  } finally {
+    await session.close();
+  }
+}
+
+// ---------- resolveDrugByName ----------
+//
+// Lowercased + formulation-stripped exact-match lookup over PrimeKG's
+// ~8K drug nodes. The name index is loaded once on first call and cached
+// for the lifetime of the process. Hardening target: RxNorm/DrugBank
+// crosswalk for real-world salt forms, brand names, and combo arms (see
+// spec Risks item 1).
+
+let drugNameIndex: Map<string, KGNode> | null = null;
+
+// Test seam: tests can install a fixture index without touching Neo4j.
+export function setDrugNameIndexForTests(idx: Map<string, KGNode> | null): void {
+  drugNameIndex = idx;
+}
+
+const CYPHER_ALL_DRUGS = `
+MATCH (d:Node {type: 'drug'})
+RETURN d.id AS id, d.name AS name
+` as const;
+
+async function ensureDrugNameIndex(): Promise<Map<string, KGNode>> {
+  if (drugNameIndex) return drugNameIndex;
+  const session = openSession();
+  try {
+    const result = await session.run(CYPHER_ALL_DRUGS);
+    const idx = new Map<string, KGNode>();
+    for (const r of result.records) {
+      const id = r.get("id") as string;
+      const name = r.get("name") as string;
+      idx.set(normalizeDrugName(name), { id, name, type: "drug" });
+    }
+    drugNameIndex = idx;
+    return idx;
+  } finally {
+    await session.close();
+  }
+}
+
+// Strip trailing dose/formulation tokens from a free-form intervention
+// string. CT.gov interventions look like "Osimertinib 80mg tablet" or
+// "Tagrisso 80 mg"; we want them to land on the same key as the
+// PrimeKG `name` field. Brittle by design — flagged as a hardening
+// target (see spec Risks item 1).
+const FORMULATION_TOKENS =
+  /\s+\d+(?:\.\d+)?\s*(?:mg|mcg|ml|g|iu|u)\b\s*(?:tablet|tablets|capsule|capsules|injection|injectable|solution|cream|ointment|suspension|syrup|gel|patch|spray|oral|iv|im)?\.?\s*$/i;
+
+function normalizeDrugName(raw: string): string {
+  return raw.toLowerCase().replace(FORMULATION_TOKENS, "").trim();
+}
+
+export async function resolveDrugByName(name: string): Promise<KGNode | null> {
+  const idx = await ensureDrugNameIndex();
+  return idx.get(normalizeDrugName(name)) ?? null;
+}

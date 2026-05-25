@@ -4,10 +4,26 @@ import type {
   TrialCandidate,
   TrialMatch,
   Mechanism,
+  MechanismEvidenceItem,
   RepurposingCandidate,
   Citation,
   EligibilityAssessment,
+  StructuredCounterEvidence,
 } from "@clinical-trial-matching/shared";
+
+// LangGraph annotations need a default value so parallel-fan-out branches
+// can read state before any node has written it. For `eligibility` we use
+// an "unclear" sentinel instead of `null` so downstream nodes (notably
+// synthesize-match, which must always emit a TrialMatch with a non-null
+// eligibility) can read it without null-guarding. eligibility-check
+// overwrites this default with a real assessment on every path (including
+// its LLM-failure fallback, which also resolves to overall="unclear").
+export const EMPTY_UNCLEAR_ELIGIBILITY: EligibilityAssessment = {
+  inclusion: [],
+  exclusion: [],
+  overall: "unclear",
+  safetyConcerns: [],
+};
 
 export const TrialEvalState = Annotation.Root({
   patientProfile: Annotation<PatientProfile>,
@@ -21,9 +37,9 @@ export const TrialEvalState = Annotation.Root({
     default: () => [],
   }),
 
-  eligibility: Annotation<EligibilityAssessment | null>({
+  eligibility: Annotation<EligibilityAssessment>({
     reducer: (_prev, next) => next,
-    default: () => null,
+    default: () => EMPTY_UNCLEAR_ELIGIBILITY,
   }),
   mechanismScore: Annotation<number | null>({
     reducer: (_prev, next) => next,
@@ -37,14 +53,36 @@ export const TrialEvalState = Annotation.Root({
     reducer: (_prev, next) => next,
     default: () => [],
   }),
+  structuredCounterEvidence: Annotation<StructuredCounterEvidence>({
+    reducer: (_prev, next) => next,
+    default: () => ({
+      primeKgContraindications: [],
+      txGnnPredContraindication: null,
+      terminatedPriorTrials: [],
+    }),
+  }),
+  mechanismEvidence: Annotation<MechanismEvidenceItem[]>({
+    reducer: (_prev, next) => next,
+    default: () => [],
+  }),
+  counterEvidenceAddressed: Annotation<string | null>({
+    reducer: (_prev, next) => next,
+    default: () => null,
+  }),
   evidenceAttempts: Annotation<number>({
     reducer: (_prev, next) => next,
     default: () => 0,
   }),
 
-  match: Annotation<TrialMatch | null>({
-    reducer: (_prev, next) => next,
-    default: () => null,
+  // Field name MUST match the parent graph's `matches: TrialMatch[]` so
+  // LangGraph propagates this subgraph's result back through the parent
+  // state. Concat reducer here is symmetric with the parent's reducer:
+  // synthesize-match writes `{ matches: [theOneMatch] }`, this subgraph's
+  // matches becomes `[theOneMatch]`, then the parent appends that array
+  // to its own `matches` when this fan-out branch completes.
+  matches: Annotation<TrialMatch[]>({
+    reducer: (prev, next) => prev.concat(next),
+    default: () => [],
   }),
 });
 

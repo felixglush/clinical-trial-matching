@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { searchClinicalTrials } from "./clinicaltrials.js";
+import { searchClinicalTrials, searchTerminatedPriorTrials } from "./clinicaltrials.js";
 import fixture from "./__fixtures__/ctgov-study-fixture.json" with { type: "json" };
 
 function makeResponse(body: unknown, init: ResponseInit = {}): Response {
@@ -152,5 +152,126 @@ describe("searchClinicalTrials", () => {
     await vi.advanceTimersByTimeAsync(1100);
     const out = await promise;
     expect(out).toHaveLength(1);
+  });
+
+  it("passes an AbortSignal to fetch (per-attempt timeout)", async () => {
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue(makeResponse({ studies: [] }));
+    await searchClinicalTrials({ term: "x" });
+    const init = spy.mock.calls[0]![1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+});
+
+describe("searchTerminatedPriorTrials", () => {
+  it("queries CT.gov with intr + term + status filter and projects whyStopped", async () => {
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        studies: [
+          {
+            protocolSection: {
+              identificationModule: { nctId: "NCT01234567", briefTitle: "Trial of X" },
+              statusModule: {
+                overallStatus: "TERMINATED",
+                whyStopped: "Stopped early at interim analysis for lack of efficacy.",
+                completionDateStruct: { date: "2021-08-15" },
+              },
+              conditionsModule: { conditions: ["Non-small cell lung cancer"] },
+              designModule: { phases: ["PHASE3"] },
+              armsInterventionsModule: { interventions: [{ name: "Osimertinib" }] },
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const out = await searchTerminatedPriorTrials({
+      intervention: "osimertinib",
+      condition: "non-small cell lung cancer",
+    });
+
+    expect(out).toEqual([
+      {
+        nctId: "NCT01234567",
+        briefTitle: "Trial of X",
+        conditions: ["Non-small cell lung cancer"],
+        interventions: ["Osimertinib"],
+        phase: "PHASE3",
+        status: "TERMINATED",
+        whyStopped: "Stopped early at interim analysis for lack of efficacy.",
+        completionDate: "2021-08-15",
+      },
+    ]);
+
+    const calledUrl = spy.mock.calls[0]![0] as string;
+    expect(calledUrl).toContain("query.intr=osimertinib");
+    expect(calledUrl).toContain("query.term=non-small+cell+lung+cancer");
+    expect(calledUrl).toContain("filter.overallStatus=TERMINATED%7CWITHDRAWN%7CSUSPENDED");
+    expect(calledUrl).toContain("protocolSection.statusModule.whyStopped");
+  });
+
+  it("returns [] when CT.gov returns no studies", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ studies: [] }),
+    } as Response);
+
+    const out = await searchTerminatedPriorTrials({
+      intervention: "obscuredrug",
+      condition: "rare disease",
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("drops studies whose overallStatus is not TERMINATED/WITHDRAWN/SUSPENDED", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        studies: [
+          {
+            protocolSection: {
+              identificationModule: { nctId: "NCT00000001", briefTitle: "Completed trial" },
+              statusModule: { overallStatus: "COMPLETED" },
+              conditionsModule: { conditions: [] },
+              armsInterventionsModule: { interventions: [] },
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const out = await searchTerminatedPriorTrials({
+      intervention: "drug",
+      condition: "disease",
+    });
+    expect(out).toEqual([]);
+  });
+
+  it("drops studies missing nctId", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        studies: [
+          {
+            protocolSection: {
+              identificationModule: {},
+              statusModule: { overallStatus: "TERMINATED" },
+              conditionsModule: { conditions: [] },
+              armsInterventionsModule: { interventions: [] },
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const out = await searchTerminatedPriorTrials({
+      intervention: "drug",
+      condition: "disease",
+    });
+    expect(out).toEqual([]);
   });
 });

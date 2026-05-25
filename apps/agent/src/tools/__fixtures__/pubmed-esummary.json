@@ -1,0 +1,50 @@
+{
+  "header": { "type": "esummary", "version": "0.3" },
+  "result": {
+    "uids": ["39603809", "39463445", "39298753"],
+    "39603809": {
+      "uid": "39603809",
+      "pubdate": "2024 Nov 28",
+      "epubdate": "2024 Nov 28",
+      "source": "N Engl J Med",
+      "authors": [
+        { "name": "Smith J", "authtype": "Author", "clusterid": "" },
+        { "name": "Doe J", "authtype": "Author", "clusterid": "" }
+      ],
+      "lastauthor": "Doe J",
+      "title": "Osimertinib versus chemotherapy in EGFR-mutated NSCLC.",
+      "volume": "391",
+      "issue": "22",
+      "pages": "2057-2068",
+      "pubtype": ["Journal Article", "Randomized Controlled Trial"],
+      "articleids": [
+        { "idtype": "pubmed", "value": "39603809" },
+        { "idtype": "doi", "value": "10.1056/NEJMoa2400000" }
+      ],
+      "fulljournalname": "The New England journal of medicine"
+    },
+    "39463445": {
+      "uid": "39463445",
+      "pubdate": "2024",
+      "source": "Lancet Oncol",
+      "authors": [{ "name": "Lee K", "authtype": "Author", "clusterid": "" }],
+      "title": "EGFR T790M resistance mechanisms in NSCLC.",
+      "pubtype": ["Journal Article"],
+      "articleids": [
+        { "idtype": "pubmed", "value": "39463445" },
+        { "idtype": "doi", "value": "10.1016/S1470-2045(24)00000-0" }
+      ],
+      "fulljournalname": "The Lancet. Oncology"
+    },
+    "39298753": {
+      "uid": "39298753",
+      "pubdate": "garbage-pubdate",
+      "source": "J Clin Oncol",
+      "authors": [],
+      "title": "Brain penetration of third-generation EGFR inhibitors.",
+      "pubtype": ["Review"],
+      "articleids": [{ "idtype": "pubmed", "value": "39298753" }],
+      "fulljournalname": "Journal of clinical oncology"
+    }
+  }
+}

@@ -25,15 +25,19 @@
  * ## Field projection
  *
  * CT.gov v2 returns very large records by default. We pass `fields=` to
- * keep responses lean — only what `TrialCandidate` carries.
+ * keep responses lean. Two separate field lists: `TRIAL_CANDIDATE_FIELDS`
+ * for `searchClinicalTrials` (only what `TrialCandidate` carries) and
+ * `TERMINATED_TRIAL_FIELDS` for `searchTerminatedPriorTrials` (lean to its
+ * `PriorTerminatedTrial` consumer).
  *
  * ## Pagination
  *
- * `pageSize` defaults to 50; we never walk `nextPageToken`. Top-50 per
- * query is the spec's cap.
+ * `pageSize` defaults to 50 for `searchClinicalTrials` and 20 for
+ * `searchTerminatedPriorTrials`; we never walk `nextPageToken`.
  */
 
 import type {
+  PriorTerminatedTrial,
   SearchFilters,
   TrialCandidate,
   TrialLocation,
@@ -44,9 +48,10 @@ const BASE_URL = "https://clinicaltrials.gov/api/v2/studies";
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
+const REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUSES = new Set([429, 503]);
 
-const FIELDS = [
+const TRIAL_CANDIDATE_FIELDS = [
   "protocolSection.identificationModule.nctId",
   "protocolSection.identificationModule.briefTitle",
   "protocolSection.statusModule.overallStatus",
@@ -60,6 +65,17 @@ const FIELDS = [
   "protocolSection.eligibilityModule.stdAges",
   "protocolSection.eligibilityModule.sex",
   "protocolSection.contactsLocationsModule.locations",
+].join("|");
+
+const TERMINATED_TRIAL_FIELDS = [
+  "protocolSection.identificationModule.nctId",
+  "protocolSection.identificationModule.briefTitle",
+  "protocolSection.statusModule.overallStatus",
+  "protocolSection.statusModule.whyStopped",
+  "protocolSection.statusModule.completionDateStruct.date",
+  "protocolSection.conditionsModule.conditions",
+  "protocolSection.designModule.phases",
+  "protocolSection.armsInterventionsModule.interventions",
 ].join("|");
 
 export type CtgQuery = {
@@ -77,6 +93,50 @@ export async function searchClinicalTrials(q: CtgQuery): Promise<TrialCandidate[
   }
   const body = (await res.json()) as CtgResponse;
   return (body.studies ?? []).map(toTrialCandidate);
+}
+
+const TERMINATED_PAGE_SIZE = 20;
+const TERMINATED_STATUSES = "TERMINATED|WITHDRAWN|SUSPENDED";
+
+export async function searchTerminatedPriorTrials(
+  args: { intervention: string; condition: string; pageSize?: number },
+): Promise<PriorTerminatedTrial[]> {
+  const params = new URLSearchParams();
+  params.set("query.intr", args.intervention);
+  params.set("query.term", args.condition);
+  params.set("filter.overallStatus", TERMINATED_STATUSES);
+  params.set("pageSize", String(args.pageSize ?? TERMINATED_PAGE_SIZE));
+  params.set("fields", TERMINATED_TRIAL_FIELDS);
+  const url = `${BASE_URL}?${params.toString()}`;
+
+  const res = await fetchWithRetry(url);
+  if (!res.ok) throw new Error(`CT.gov ${res.status} for ${url}`);
+  const body = (await res.json()) as CtgResponse;
+  return (body.studies ?? []).flatMap(toPriorTerminatedTrial);
+}
+
+// Returns [] (not [partial]) if the study lacks an nctId or has an
+// overallStatus we don't recognize as a terminated variant. flatMap drops
+// the empty arrays cleanly.
+function toPriorTerminatedTrial(study: CtgStudy): PriorTerminatedTrial[] {
+  const p = study.protocolSection ?? {};
+  const nctId = p.identificationModule?.nctId;
+  const status = p.statusModule?.overallStatus;
+  if (!nctId || (status !== "TERMINATED" && status !== "WITHDRAWN" && status !== "SUSPENDED")) {
+    return [];
+  }
+  return [{
+    nctId,
+    briefTitle: p.identificationModule?.briefTitle ?? "",
+    conditions: p.conditionsModule?.conditions ?? [],
+    interventions: (p.armsInterventionsModule?.interventions ?? [])
+      .map((i) => i.name)
+      .filter((n): n is string => typeof n === "string"),
+    phase: p.designModule?.phases?.[0],
+    status,
+    whyStopped: p.statusModule?.whyStopped,
+    completionDate: p.statusModule?.completionDateStruct?.date,
+  }];
 }
 
 function buildUrl(q: CtgQuery): string {
@@ -98,14 +158,17 @@ function buildUrl(q: CtgQuery): string {
   }
   if (q.filters?.country) params.set("query.locn", q.filters.country);
   params.set("pageSize", String(q.pageSize ?? DEFAULT_PAGE_SIZE));
-  params.set("fields", FIELDS);
+  params.set("fields", TRIAL_CANDIDATE_FIELDS);
   return `${BASE_URL}?${params.toString()}`;
 }
 
 async function fetchWithRetry(url: string): Promise<Response> {
   let lastRes: Response | null = null;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const res = await fetch(url);
+    // Per-attempt timeout: a hung connection on one attempt shouldn't
+    // exhaust the budget for the next. Throws AbortError on expiry,
+    // which propagates out (we don't retry network-level failures).
+    const res = await fetch(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!RETRYABLE_STATUSES.has(res.status)) return res;
     lastRes = res;
     if (attempt === MAX_RETRIES - 1) break;
@@ -136,7 +199,11 @@ function sleep(ms: number): Promise<void> {
 type CtgStudy = {
   protocolSection?: {
     identificationModule?: { nctId?: string; briefTitle?: string };
-    statusModule?: { overallStatus?: string };
+    statusModule?: {
+      overallStatus?: string;
+      whyStopped?: string;
+      completionDateStruct?: { date?: string };
+    };
     descriptionModule?: { briefSummary?: string };
     conditionsModule?: { conditions?: string[] };
     designModule?: { phases?: string[] };

@@ -1,0 +1,11 @@
+{
+  "header": { "type": "esearch", "version": "0.3" },
+  "esearchresult": {
+    "count": "3",
+    "retmax": "3",
+    "retstart": "0",
+    "idlist": ["39603809", "39463445", "39298753"],
+    "translationset": [],
+    "querytranslation": "osimertinib AND EGFR AND non-small cell lung carcinoma"
+  }
+}

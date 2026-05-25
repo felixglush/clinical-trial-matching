@@ -69,6 +69,36 @@ two places, stop. Extract first.
 - **No backwards-compat shims** for code that hasn't shipped. Rename
   freely; we have typecheck.
 
+## Nullability in agent state
+
+LangGraph annotation `default`s don't have to be `null`. Three kinds of
+nullable state — pick the right one:
+
+1. **Lifecycle-nullable**: genuinely absent until its producing node
+   runs (`patientProfile`, `searchStrategy`, `approvalRequest`). Type
+   `| null`; every reader guards with an early
+   `return { error: "..." }`. Canonical pattern in
+   `apps/agent/src/nodes/pre-filter.ts:75–78`.
+2. **Topology-guaranteed**: an upstream node *always* writes it before
+   any downstream reader (e.g. `eligibility` is written by
+   `eligibility-check` before `synthesize-match` runs). The `null` here
+   is a vestige of the annotation contract, not a real state. Prefer
+   a typed sentinel default and type the annotation non-nullable —
+   e.g. `EMPTY_UNCLEAR_ELIGIBILITY` in
+   `apps/agent/src/subgraphs/trial-eval/state.ts`. Readers drop the
+   `?.` everywhere and never need `!`.
+3. **Semantically null**: `null` carries information no sentinel can
+   express. Example: `mechanismScore: number | null` where `null` means
+   "evaluation didn't run / failed" and `synthesize-match` raises a
+   specific `"mechanism evaluation unavailable"` concern in that case.
+   Keep `| null`; the null is real.
+
+`state.x!` non-null assertions are always wrong. Either upgrade the
+type to non-nullable with a sentinel (case 2) or add an explicit guard
+(case 1). If the same file reads a nullable field with `?.` in some
+places and `!` in others, that inconsistency is the smell — the
+implicit "never null" expectation belongs in the type, not the reader.
+
 ## Test conventions
 
 - **Unit tests** (`*.test.ts`) co-located with source. Use Vitest. Run
