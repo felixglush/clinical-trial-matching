@@ -268,7 +268,7 @@ function formatStructuredCounterEvidence(sce: StructuredCounterEvidence): string
     sections.push("");
   }
 
-  if (sce.txGnnPredContraindication !== null) {
+  if (sce.txGnnPredContraindication !== null && sce.txGnnPredContraindication > 0) {
     sections.push(
       "  TxGNN repurposing model:",
       `    predContraindication = ${sce.txGnnPredContraindication.toFixed(2)} (higher = TxGNN predicts this drug is contraindicated for the patient's disease; treat as a learned negative signal).`,

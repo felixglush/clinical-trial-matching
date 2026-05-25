@@ -218,6 +218,24 @@ describe("mechanismScorePrompt (v1.5) — literature blocks", () => {
     expect(out).toMatch(/TxGNN repurposing model:[\s\S]+?\n\n\s*Prior terminated/);
   });
 
+  it("omits the TxGNN counter-evidence subsection when predContraindication is 0", () => {
+    const out = mechanismScorePrompt(
+      profile(),
+      trial(),
+      [mech()],
+      [],
+      [],
+      {
+        primeKgContraindications: [],
+        txGnnPredContraindication: 0,
+        terminatedPriorTrials: [],
+      },
+      null,
+    );
+    expect(out).not.toContain("TxGNN repurposing model:");
+    expect(out).not.toContain("predContraindication = 0.00");
+  });
+
   it("instructs LLM to weight Tier-1 > Tier-2 > Tier-3 and address counter-evidence", () => {
     const out = mechanismScorePrompt(profile(), trial(), [mech()], [kgPath()], [], emptySce(), null);
     expect(out).toMatch(/Tier-1.*Tier-2.*Tier-3/s);
